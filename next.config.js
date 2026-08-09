@@ -48,17 +48,14 @@ const nextConfig = {
   // Note: Next.js 16 uses Turbopack by default for `next dev` and `next build`.
   // The `@/*` path alias is resolved from jsconfig.json, so no bundler-specific
   // alias config is needed here.
-
-  // Enable output file tracing for better Vercel optimization
-  output: 'standalone',
+  //
+  // Do NOT set `output: 'standalone'` here — Vercel performs its own output
+  // file tracing, and standalone mode breaks the Next 16 build on Vercel with
+  // `ENOENT ... .next/next-server.js.nft.json`. Standalone is only for
+  // self-hosting (e.g. Docker).
 
   // PoweredBy header removal for security
   poweredByHeader: false,
-
-  // Enable build caching for faster builds on Vercel
-  generateBuildId: async () => {
-    return 'rdap-lookup-build';
-  },
 };
 
 module.exports = nextConfig;
