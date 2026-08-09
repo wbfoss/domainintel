@@ -1,8 +1,18 @@
 import { NextResponse } from "next/server";
 import dns from "dns";
 import tls from "tls";
+import net from "net";
 
-// In-memory store for rate limiting:
+// This route depends on Node core modules (dns, tls, net), so pin it to the
+// Node.js runtime and force dynamic execution (never cache/prerender).
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+// In-memory store for rate limiting.
+// NOTE: this only limits within a single running instance. On Vercel
+// (serverless / Fluid Compute) requests are spread across multiple ephemeral
+// instances, so this is best-effort throttling only. For durable, cross-instance
+// limits, back this with a shared store (e.g. Upstash Redis from the Marketplace).
 const rateLimitStore = {};
 
 /**
@@ -86,53 +96,48 @@ export async function POST(request) {
       );
     }
 
-    // Verify hCaptcha token
-    if (!captchaToken) {
-      return NextResponse.json(
-        { message: "Captcha token is required." },
-        { status: 400 }
-      );
+    // Count this request now (before the upstream work) so the per-IP throttle
+    // is enforced regardless of whether the lookup ultimately succeeds.
+    updateRateLimit(ip);
+
+    // Verify hCaptcha token — but only when hCaptcha is actually configured.
+    // This mirrors the frontend, which disables the CAPTCHA widget when the
+    // site key is absent. Without this guard, every lookup fails with 400 on
+    // any deployment that hasn't set HCAPTCHA_SECRET_KEY.
+    if (process.env.HCAPTCHA_SECRET_KEY) {
+      if (!captchaToken) {
+        return NextResponse.json(
+          { message: "Captcha token is required." },
+          { status: 400 }
+        );
+      }
+
+      const isValidCaptcha = await verifyHCaptcha(captchaToken);
+      if (!isValidCaptcha) {
+        return NextResponse.json(
+          { message: "Invalid captcha token. Please try again." },
+          { status: 400 }
+        );
+      }
     }
 
-    const isValidCaptcha = await verifyHCaptcha(captchaToken);
-    if (!isValidCaptcha) {
-      return NextResponse.json(
-        { message: "Invalid captcha token. Please try again." },
-        { status: 400 }
-      );
-    }
-
-    // Primary RDAP request
+    // Primary RDAP request. rdap.org is the IANA bootstrap resolver: it already
+    // 302-redirects to the authoritative RDAP server for the given object (and
+    // fetch follows redirects by default), so there is no useful secondary
+    // fallback to add here. (The previous rdap.iana.org fallback only served
+    // TLD/bootstrap data and 404'd for every real domain.)
     const rdapUrl = `https://rdap.org/${type}/${object}`;
     const response = await fetch(rdapUrl);
 
-    // If rdap.org fails & type=domain => fallback
     if (!response.ok) {
-      if (type === "domain") {
-        const fallbackUrl = `https://rdap.iana.org/domain/${object}`;
-        const fallbackResponse = await fetch(fallbackUrl);
-
-        if (!fallbackResponse.ok) {
-          return NextResponse.json(
-            {
-              message: `RDAP lookup failed for ${object}. The primary service and the IANA fallback both failed. Please check the domain and try again.`,
-            },
-            { status: fallbackResponse.status }
-          );
-        }
-
-        const fallbackData = await fallbackResponse.json();
-        updateRateLimit(ip);
-        return NextResponse.json(fallbackData, { status: 200 });
-      } else {
-        // No fallback for IP, autnum, entity
-        return NextResponse.json(
-          {
-            message: `RDAP lookup failed for ${type}/${object}. Please check the identifier and try again.`,
-          },
-          { status: response.status }
-        );
-      }
+      const detail =
+        response.status === 404
+          ? `No RDAP record found for ${type}/${object}.`
+          : `RDAP lookup failed for ${type}/${object} (upstream status ${response.status}).`;
+      return NextResponse.json(
+        { message: `${detail} Please check the identifier and try again.` },
+        { status: response.status }
+      );
     }
 
     // If primary request succeeded
@@ -180,7 +185,6 @@ export async function POST(request) {
       }
     }
 
-    updateRateLimit(ip);
     return NextResponse.json(data, { status: 200 });
   } catch (error) {
     return NextResponse.json(
@@ -195,6 +199,9 @@ function getCertificate(domain) {
     const options = {
       host: domain,
       port: 443,
+      // Send SNI so hosts serving multiple certs return the right one;
+      // without servername, getPeerCertificate() can come back empty/wrong.
+      servername: domain,
     };
 
     const socket = tls.connect(options, () => {
@@ -239,6 +246,12 @@ const RBL_PROVIDERS = [
  * @returns {Promise<Object>} A promise that resolves to an object with RBL results.
  */
 async function checkRbls(ip) {
+  // The reversed-nibble DNSBL query below is IPv4-only. Most public RBLs
+  // (Spamhaus ZEN, Barracuda, SpamCop) are IPv4-only anyway, so skip IPv6.
+  if (net.isIPv4(ip) === false) {
+    return { note: "RBL checks are only supported for IPv4 addresses." };
+  }
+
   const reversedIp = ip.split(".").reverse().join(".");
   const results = {};
 
