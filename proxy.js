@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 
-export function middleware(request) {
+export function proxy(request) {
   // Clone the request headers
   const requestHeaders = new Headers(request.headers);
   

@@ -7,18 +7,22 @@
     "build": "next build",
     "start": "next start"
   },
+  "engines": {
+    "node": ">=20.9.0"
+  },
   "dependencies": {
     "@hcaptcha/react-hcaptcha": "^1.12.0",
     "@vercel/analytics": "^1.5.0",
     "@vercel/speed-insights": "^1.2.0",
     "lucide-react": "^0.544.0",
-    "next": "^14.2.32",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "next": "^16.3.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
   },
   "devDependencies": {
     "@types/node": "24.3.0",
-    "@types/react": "19.1.10",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
     "autoprefixer": "^10.4.14",
     "postcss": "^8.4.21",
     "tailwindcss": "^3.4.17",
@@ -27,7 +31,7 @@
   "keywords": [
     "rdap",
     "nextjs",
-    "app-router", 
+    "app-router",
     "tailwind",
     "rate-limiting"
   ],
