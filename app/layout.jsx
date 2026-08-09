@@ -5,7 +5,7 @@ import { Providers } from '../components/providers';
 import Footer from '../components/Footer';
 
 export const metadata = {
-  metadataBase: new URL('https://domainintel.in'),
+  metadataBase: new URL('https://www.domainintel.in'),
   title: 'DomainIntel - Modern Domain Intelligence & Security Platform',
   description: 'Advanced domain intelligence and cybersecurity platform. RDAP lookup, threat detection, security analysis for domains, IPs, and network infrastructure. Free tools for security researchers.',
   keywords: [
@@ -51,7 +51,7 @@ export const metadata = {
   openGraph: {
     type: 'website',
     locale: 'en_US',
-    url: 'https://domainintel.in',
+    url: 'https://www.domainintel.in',
     siteName: 'DomainIntel',
     title: 'DomainIntel - Modern Domain Intelligence & Security Platform',
     description: 'Advanced domain intelligence and cybersecurity platform. RDAP lookup, threat detection, security analysis for domains, IPs, and network infrastructure.',
@@ -73,7 +73,7 @@ export const metadata = {
     images: ['/api/og?title=DomainIntel&description=Domain+Intelligence+Platform'],
   },
   alternates: {
-    canonical: 'https://domainintel.in',
+    canonical: 'https://www.domainintel.in',
   },
   other: {
     'mobile-web-app-capable': 'yes',
@@ -92,7 +92,7 @@ export default function RootLayout({ children }) {
     "@type": "WebApplication",
     "name": "DomainIntel",
     "description": "Advanced domain intelligence and cybersecurity platform. RDAP lookup, threat detection, security analysis for domains, IPs, and network infrastructure.",
-    "url": "https://domainintel.in",
+    "url": "https://www.domainintel.in",
     "applicationCategory": "NetworkApplication",
     "operatingSystem": "Web",
     "offers": {

@@ -4,4 +4,4 @@ Allow: /api/og
 
 Disallow: /api/lookup
 
-Sitemap: https://domainintel.in/sitemap.xml
+Sitemap: https://www.domainintel.in/sitemap.xml

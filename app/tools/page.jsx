@@ -301,7 +301,7 @@ export default function ToolsPage() {
             Help us build these security tools faster by contributing to the open source project.
           </p>
           <a
-            href="https://github.com/gensecaihq/rdap-lookup"
+            href="https://github.com/wbfoss/rdap-lookup"
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-2 px-6 py-3 bg-gray-900 text-white font-medium rounded-lg hover:bg-gray-800 transition-colors"

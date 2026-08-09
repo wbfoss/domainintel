@@ -33,12 +33,12 @@ export const metadata = {
     'SSL certificate checker open source'
   ],
   alternates: {
-    canonical: 'https://domainintel.in/about',
+    canonical: 'https://www.domainintel.in/about',
   },
   openGraph: {
     title: 'About DomainIntel - Open Source Domain Intelligence & Security Platform',
     description: 'Free, open source domain intelligence and cybersecurity platform. Built with Next.js, React, and modern web technologies. Join the security community.',
-    url: 'https://domainintel.in/about',
+    url: 'https://www.domainintel.in/about',
     type: 'website',
   },
 };
@@ -96,7 +96,7 @@ export default function AboutPage() {
             </p>
             <div className="flex flex-wrap gap-3">
               <a
-                href="https://github.com/gensecaihq/rdap-lookup"
+                href="https://github.com/wbfoss/rdap-lookup"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white font-medium rounded-md hover:bg-blue-700 transition-colors"
@@ -105,7 +105,7 @@ export default function AboutPage() {
                 Star on GitHub
               </a>
               <a
-                href="https://github.com/gensecaihq/rdap-lookup/fork"
+                href="https://github.com/wbfoss/rdap-lookup/fork"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-2 px-4 py-2 bg-gray-600 text-white font-medium rounded-md hover:bg-gray-700 transition-colors"
@@ -195,7 +195,7 @@ export default function AboutPage() {
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <a
-                href="https://github.com/gensecaihq/rdap-lookup/discussions"
+                href="https://github.com/wbfoss/rdap-lookup/discussions"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="flex items-center gap-2 text-gray-600 hover:text-blue-600 transition-colors"
@@ -204,7 +204,7 @@ export default function AboutPage() {
                 <span>GitHub Discussions</span>
               </a>
               <a
-                href="https://github.com/gensecaihq/rdap-lookup/issues"
+                href="https://github.com/wbfoss/rdap-lookup/issues"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="flex items-center gap-2 text-gray-600 hover:text-blue-600 transition-colors"
@@ -213,7 +213,7 @@ export default function AboutPage() {
                 <span>Report Issues</span>
               </a>
               <a
-                href="https://github.com/gensecaihq/rdap-lookup"
+                href="https://github.com/wbfoss/rdap-lookup"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="flex items-center gap-2 text-gray-600 hover:text-blue-600 transition-colors"
@@ -222,7 +222,7 @@ export default function AboutPage() {
                 <span>GitHub Repository</span>
               </a>
               <a
-                href="https://github.com/gensecaihq"
+                href="https://github.com/wbfoss"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="flex items-center gap-2 text-gray-600 hover:text-blue-600 transition-colors"

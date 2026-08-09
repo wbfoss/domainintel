@@ -19,7 +19,7 @@ export default function Header() {
   useEffect(() => {
     const fetchStarCount = async () => {
       try {
-        const response = await fetch("https://api.github.com/repos/gensecaihq/rdap-lookup");
+        const response = await fetch("https://api.github.com/repos/wbfoss/rdap-lookup");
         const data = await response.json();
         setStarCount(data.stargazers_count);
       } catch (error) {
@@ -74,7 +74,7 @@ export default function Header() {
           <div className="hidden md:flex items-center space-x-3">
             {/* GitHub Button with Star Count */}
             <a
-              href="https://github.com/gensecaihq/rdap-lookup"
+              href="https://github.com/wbfoss/rdap-lookup"
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-2 px-3 py-2 bg-gray-900 text-white text-sm font-medium rounded-md hover:bg-gray-800 transition-all hover:scale-105"
@@ -121,7 +121,7 @@ export default function Header() {
               
               <div className="px-3 py-2">
                 <a
-                  href="https://github.com/gensecaihq/rdap-lookup"
+                  href="https://github.com/wbfoss/rdap-lookup"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex items-center gap-2 px-3 py-2 bg-gray-900 text-white text-sm font-medium rounded-md hover:bg-gray-800 transition-colors w-full justify-center"

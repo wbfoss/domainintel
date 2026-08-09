@@ -18,7 +18,7 @@ export default function Footer() {
           <div className="flex flex-wrap justify-center gap-6">
             <Link href="/about" className="text-sm text-gray-600 hover:text-blue-600 transition-colors">About</Link>
             <Link href="/what-is-rdap" className="text-sm text-gray-600 hover:text-blue-600 transition-colors">What is RDAP?</Link>
-            <a href="https://github.com/gensecaihq/rdap-lookup" target="_blank" rel="noopener noreferrer" className="text-sm text-gray-600 hover:text-blue-600 transition-colors">GitHub</a>
+            <a href="https://github.com/wbfoss/rdap-lookup" target="_blank" rel="noopener noreferrer" className="text-sm text-gray-600 hover:text-blue-600 transition-colors">GitHub</a>
           </div>
         </div>
       </div>

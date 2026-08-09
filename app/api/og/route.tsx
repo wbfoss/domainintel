@@ -253,7 +253,7 @@ export async function GET(request: Request) {
               color: '#64748B',
             }}
           >
-            domainintel.in
+            www.domainintel.in
           </div>
         </div>
       ),

@@ -12,9 +12,9 @@
 
 # 🔍 RDAP Lookup - Modern Domain Intelligence & Security Platform
 
-A comprehensive **RDAP (Registration Data Access Protocol)** lookup tool and cybersecurity platform built with **Next.js 14**, **React 18**, and **Tailwind CSS**. This modern, open-source application provides domain intelligence, network analysis, and security research capabilities for cybersecurity professionals, IT administrators, and security researchers.
+A comprehensive **RDAP (Registration Data Access Protocol)** lookup tool and cybersecurity platform built with **Next.js 16**, **React 19**, and **Tailwind CSS**. This modern, open-source application provides domain intelligence, network analysis, and security research capabilities for cybersecurity professionals, IT administrators, and security researchers.
 
-🌐 **Live Demo:** [https://rdap.vercel.app](https://rdap.vercel.app)
+🌐 **Live Demo:** [https://www.domainintel.in](https://www.domainintel.in)
 
 ----------
 

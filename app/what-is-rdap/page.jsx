@@ -33,12 +33,12 @@ export const metadata = {
     'IETF RDAP standard'
   ],
   alternates: {
-    canonical: 'https://domainintel.in/what-is-rdap',
+    canonical: 'https://www.domainintel.in/what-is-rdap',
   },
   openGraph: {
     title: 'What is RDAP? Complete Guide to Registration Data Access Protocol',
     description: 'Learn everything about RDAP - the modern replacement for WHOIS. Understand how RDAP works, its benefits, API usage, and why it\'s the future of domain and network intelligence.',
-    url: 'https://domainintel.in/what-is-rdap',
+    url: 'https://www.domainintel.in/what-is-rdap',
     type: 'article',
   },
 };

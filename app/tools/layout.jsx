@@ -14,12 +14,12 @@ export const metadata = {
     'network security'
   ],
   alternates: {
-    canonical: 'https://domainintel.in/tools',
+    canonical: 'https://www.domainintel.in/tools',
   },
   openGraph: {
     title: 'Security Tools - Domain & Network Intelligence',
     description: 'Comprehensive security tools for domain analysis, threat detection, and cybersecurity research.',
-    url: 'https://domainintel.in/tools',
+    url: 'https://www.domainintel.in/tools',
     type: 'website',
   },
 };
