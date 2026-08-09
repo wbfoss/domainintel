@@ -1,6 +1,7 @@
 import { ImageResponse } from 'next/og';
 
-export const runtime = 'edge';
+// Next.js 16 deprecates the Edge Runtime; next/og runs on the Node.js runtime.
+export const runtime = 'nodejs';
 
 export async function GET(request: Request) {
   try {

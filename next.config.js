@@ -17,9 +17,6 @@ const nextConfig = {
   // Compress responses
   compress: true,
 
-  // Enable SWC minification
-  swcMinify: true,
-
   // Headers for static assets
   async headers() {
     return [
@@ -33,15 +30,9 @@ const nextConfig = {
           }
         ],
       },
-      {
-        source: '/_next/static/:path*',
-        headers: [
-          {
-            key: 'Cache-Control',
-            value: 'public, max-age=31536000, immutable',
-          },
-        ],
-      },
+      // Note: Next.js already serves /_next/static/* with immutable long-term
+      // caching (content-hashed filenames), so we don't override it here — doing
+      // so triggers a build warning and can interfere with dev behavior.
       {
         source: '/api/og/:path*',
         headers: [
@@ -54,18 +45,9 @@ const nextConfig = {
     ];
   },
 
-  // Optimize bundle
-  webpack: (config, { buildId, dev, isServer, defaultLoaders, webpack }) => {
-    // Optimize bundle size
-    if (!dev && !isServer) {
-      config.resolve.alias = {
-        ...config.resolve.alias,
-        '@': require('path').resolve(__dirname),
-      };
-    }
-    
-    return config;
-  },
+  // Note: Next.js 16 uses Turbopack by default for `next dev` and `next build`.
+  // The `@/*` path alias is resolved from jsconfig.json, so no bundler-specific
+  // alias config is needed here.
 
   // Enable output file tracing for better Vercel optimization
   output: 'standalone',
