@@ -11,7 +11,7 @@
     "@hcaptcha/react-hcaptcha": "^1.12.0",
     "@vercel/analytics": "^1.5.0",
     "@vercel/speed-insights": "^1.2.0",
-    "lucide-react": "^0.540.0",
+    "lucide-react": "^0.544.0",
     "next": "^14.2.32",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
