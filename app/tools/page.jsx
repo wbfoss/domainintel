@@ -27,12 +27,10 @@ import SuspiciousTLDFlagging from "../../components/tools/SuspiciousTLDFlagging"
 import SSLConfigAssessment from "../../components/tools/SSLConfigAssessment";
 import SPFAnalysis from "../../components/tools/SPFAnalysis";
 import DMARCAssessment from "../../components/tools/DMARCAssessment";
-import BlacklistAggregation from "../../components/tools/BlacklistAggregation";
 import PhishingLookup from "../../components/tools/PhishingLookup";
 import FastFluxDetection from "../../components/tools/FastFluxDetection";
 import DomainParkingAnalysis from "../../components/tools/DomainParkingAnalysis";
 import MalwareC2Detection from "../../components/tools/MalwareC2Detection";
-import CertificateTransparencyMonitoring from "../../components/tools/CertificateTransparencyMonitoring";
 import DnsLookup from "../../components/tools/DnsLookup";
 import MxLookup from "../../components/tools/MxLookup";
 import ReverseDnsLookup from "../../components/tools/ReverseDnsLookup";
@@ -125,24 +123,6 @@ export default function ToolsPage() {
       status: 'available',
       category: 'Threat Intelligence',
       color: 'red'
-    },
-    {
-      id: 'blacklist-check',
-      title: 'Blacklist Aggregation',
-      description: 'Check against multiple security vendor blacklists',
-      icon: AlertTriangle,
-      status: 'available',
-      category: 'Threat Intelligence',
-      color: 'red'
-    },
-    {
-      id: 'cert-transparency',
-      title: 'Certificate Transparency Monitoring',
-      description: 'Track certificate issuance patterns and anomalies',
-      icon: Lock,
-      status: 'available',
-      category: 'Certificate & SSL',
-      color: 'blue'
     },
     {
       id: 'ssl-config',
@@ -382,9 +362,6 @@ export default function ToolsPage() {
       {activeTool === 'dmarc-assessment' && (
         <DMARCAssessment onClose={() => setActiveTool(null)} />
       )}
-      {activeTool === 'blacklist-check' && (
-        <BlacklistAggregation onClose={() => setActiveTool(null)} />
-      )}
       {activeTool === 'phishing-lookup' && (
         <PhishingLookup onClose={() => setActiveTool(null)} />
       )}
@@ -396,9 +373,6 @@ export default function ToolsPage() {
       )}
       {activeTool === 'malware-c2' && (
         <MalwareC2Detection onClose={() => setActiveTool(null)} />
-      )}
-      {activeTool === 'cert-transparency' && (
-        <CertificateTransparencyMonitoring onClose={() => setActiveTool(null)} />
       )}
       {activeTool === 'dkim-lookup' && (
         <DkimLookup onClose={() => setActiveTool(null)} />
