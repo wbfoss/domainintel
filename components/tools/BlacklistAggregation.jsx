@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { AlertTriangle, CheckCircle, XCircle } from 'lucide-react';
+import { AlertTriangle, CheckCircle, XCircle, Info } from 'lucide-react';
 import { callTool, validateDomain, isIPv4 } from '../../utils/security-tools';
 import { ToolShell, QueryForm, ErrorNote, InfoNote, Badge, StatCard, Mono } from './_shared';
 
@@ -24,14 +24,21 @@ function CheckResults({ check }) {
               <div className="flex items-center gap-2 min-w-0">
                 {r.listed ? (
                   <XCircle className="w-4 h-4 text-red-500 shrink-0" />
+                ) : r.unavailable || r.error ? (
+                  <Info className="w-4 h-4 text-gray-400 shrink-0" />
                 ) : (
                   <CheckCircle className="w-4 h-4 text-green-500 shrink-0" />
                 )}
                 <span className="text-sm font-medium text-gray-900 truncate">{r.provider}</span>
                 <span className="text-xs text-gray-500 font-mono truncate hidden sm:inline">{r.zone}</span>
               </div>
-              <Badge level={r.listed ? 'high' : 'low'}>{r.listed ? 'Listed' : 'Not Listed'}</Badge>
+              <Badge level={r.listed ? 'high' : r.unavailable || r.error ? 'unknown' : 'low'}>
+                {r.listed ? 'Listed' : r.unavailable || r.error ? 'Unavailable' : 'Not Listed'}
+              </Badge>
             </div>
+            {(r.unavailable || r.error) && (
+              <p className="mt-1 ml-6 text-xs text-gray-500">{r.note || `Query error: ${r.error}`}</p>
+            )}
             {r.listed && (r.reason || r.response) && (
               <div className="mt-2 ml-6 text-xs text-gray-700 space-y-1">
                 {r.response && (

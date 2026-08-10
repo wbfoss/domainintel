@@ -134,6 +134,14 @@ const DNSBL_ZONES = [
   { zone: "psbl.surriel.com", name: "PSBL" },
 ];
 
+// A response in 127.255.255.0/24 is a control/error code (e.g. Spamhaus:
+// .252 typing error, .254 query via public/open resolver, .255 rate-limited),
+// NOT a real listing. Treating it as "listed" causes false positives, which is
+// common on shared serverless resolvers.
+function isBlockResponse(addrs) {
+  return addrs.every((a) => a.startsWith("127.255.255."));
+}
+
 async function checkDnsbls(ip) {
   const reversed = ip.split(".").reverse().join(".");
   const results = await Promise.all(
@@ -141,6 +149,15 @@ async function checkDnsbls(ip) {
       const query = `${reversed}.${zone}`;
       try {
         const a = await resolver.resolve4(query);
+        if (isBlockResponse(a)) {
+          return {
+            provider: name,
+            zone,
+            listed: false,
+            unavailable: true,
+            note: "Provider blocked the query (needs a dedicated resolver).",
+          };
+        }
         let txt = [];
         try {
           txt = (await resolver.resolveTxt(query)).map((c) => c.join(""));
@@ -157,7 +174,8 @@ async function checkDnsbls(ip) {
     })
   );
   const listedCount = results.filter((r) => r.listed).length;
-  return { ip, listedCount, total: DNSBL_ZONES.length, results };
+  const unavailableCount = results.filter((r) => r.unavailable).length;
+  return { ip, listedCount, unavailableCount, total: DNSBL_ZONES.length, results };
 }
 
 // Resolve a hostname to an IPv4 then run DNSBL (domain-based blacklist view)
