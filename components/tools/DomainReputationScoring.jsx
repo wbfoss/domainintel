@@ -1,277 +1,220 @@
 'use client';
 
 import { useState } from 'react';
-import { Shield, AlertTriangle, CheckCircle, Info, TrendingUp, TrendingDown, Activity } from 'lucide-react';
-import { safeJsonParse } from "../../utils/security-tools";
+import { Shield } from 'lucide-react';
+import {
+  callTool,
+  validateDomain,
+  SUSPICIOUS_TLDS,
+  tldOf,
+} from '../../utils/security-tools';
+import {
+  ToolShell,
+  QueryForm,
+  ErrorNote,
+  InfoNote,
+  Badge,
+  StatCard,
+} from './_shared';
+
+// Grade thresholds applied to the percentage of points earned across the
+// factors we could actually measure.
+function gradeOf(pct) {
+  if (pct >= 85) return { grade: 'A', level: 'low', label: 'Good reputation signals' };
+  if (pct >= 70) return { grade: 'B', level: 'low', label: 'Mostly healthy signals' };
+  if (pct >= 55) return { grade: 'C', level: 'medium', label: 'Mixed signals' };
+  if (pct >= 40) return { grade: 'D', level: 'high', label: 'Weak signals' };
+  return { grade: 'F', level: 'critical', label: 'Poor reputation signals' };
+}
 
 export default function DomainReputationScoring({ onClose }) {
-  const [domain, setDomain] = useState('');
+  const [target, setTarget] = useState('');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState('');
 
-  const calculateReputationScore = async (e) => {
-    e.preventDefault();
-    if (!domain.trim()) return;
+  const analyze = async () => {
+    let domain;
+    try {
+      domain = validateDomain(target);
+    } catch (err) {
+      setError(err.message);
+      return;
+    }
 
     setLoading(true);
     setError('');
     setResult(null);
 
     try {
-      // Validate domain format - allow anything.extension format
-      const cleanDomain = domain.trim();
-      if (!/^[a-zA-Z0-9][a-zA-Z0-9.-]*[a-zA-Z0-9]\.[a-zA-Z]{2,}$/.test(cleanDomain)) {
-        throw new Error('Please enter a valid domain name (e.g., example.com)');
+      const [rdapRes, dnsRes, dnsblRes] = await Promise.allSettled([
+        callTool('rdap', { target: domain }),
+        callTool('dns', { target: domain }),
+        callTool('dnsbl', { target: domain }),
+      ]);
+
+      const rdap = rdapRes.status === 'fulfilled' ? rdapRes.value : null;
+      const dns = dnsRes.status === 'fulfilled' ? dnsRes.value : null;
+      const dnsbl = dnsblRes.status === 'fulfilled' ? dnsblRes.value : null;
+
+      const factors = [];
+      const unknown = (key, label, max, reason) =>
+        factors.push({ key, label, max, unknown: true, why: reason });
+
+      // ---- 1. Domain age (RDAP) — 25 pts ----
+      if (rdap?.registered && typeof rdap.ageInDays === 'number') {
+        const age = rdap.ageInDays;
+        let points, level;
+        if (age < 30) { points = 0; level = 'critical'; }
+        else if (age < 90) { points = 5; level = 'high'; }
+        else if (age < 180) { points = 10; level = 'medium'; }
+        else if (age < 365) { points = 15; level = 'medium'; }
+        else if (age < 730) { points = 20; level = 'low'; }
+        else { points = 25; level = 'low'; }
+        const years = Math.floor(age / 365);
+        factors.push({
+          key: 'age', label: 'Domain age', max: 25, points, level,
+          value: years >= 1 ? `${years} yr ${age % 365} d (${age} days)` : `${age} days`,
+          why: age < 90
+            ? 'Very recently registered domains are disproportionately used for abuse.'
+            : 'Older registrations correlate with legitimate, established use.',
+        });
+      } else if (rdap && rdap.registered === false) {
+        unknown('age', 'Domain age', 25, 'RDAP reports the domain as not registered.');
+      } else {
+        unknown('age', 'Domain age', 25, 'RDAP registration date unavailable.');
       }
 
-      // For now, simulate reputation scoring with realistic data
-      // In production, this would use multiple threat intelligence sources
+      // ---- 2. DNSSEC (RDAP) — 10 pts ----
+      if (rdap?.registered && typeof rdap.dnssec === 'boolean') {
+        factors.push({
+          key: 'dnssec', label: 'DNSSEC', max: 10,
+          points: rdap.dnssec ? 10 : 0,
+          level: rdap.dnssec ? 'low' : 'medium',
+          value: rdap.dnssec ? 'Signed' : 'Unsigned',
+          why: rdap.dnssec
+            ? 'DNSSEC signing protects resolution from spoofing.'
+            : 'No DNSSEC — common, but signed zones show more operational care.',
+        });
+      } else {
+        unknown('dnssec', 'DNSSEC', 10, 'DNSSEC status unavailable from RDAP.');
+      }
 
-      // Simulate domain data
-      const simulatedData = {
-        events: [{
-          eventAction: 'registration',
-          eventDate: new Date(Date.now() - Math.random() * 365 * 24 * 60 * 60 * 1000 * 5).toISOString() // Random date within last 5 years
-        }],
-        port43: Math.random() > 0.5 ? 'whois.godaddy.com' : 'whois.namecheap.com',
-        secureDNS: Math.random() > 0.3, // 70% chance of DNSSEC
-        status: Math.random() > 0.8 ? ['serverHold'] : ['active'],
-        nameservers: [
-          { ldhName: 'ns1.example.com' },
-          { ldhName: 'ns2.example.com' }
-        ]
-      };
-
-      // Calculate various reputation factors
-      const factors = {};
-      let totalScore = 0;
-      const weights = {
-        domainAge: 25,
-        registrar: 15,
-        dnssec: 15,
-        status: 15,
-        nameservers: 10,
-        tld: 10,
-        updates: 10
-      };
-
-      // 1. Domain Age Score (25 points max)
-      if (simulatedData.events && simulatedData.events.length > 0) {
-        const registrationEvent = simulatedData.events.find(event => 
-          event.eventAction === 'registration' || 
-          event.eventAction === 'last update of RDAP database'
-        );
-        
-        if (registrationEvent) {
-          const registrationDate = new Date(registrationEvent.eventDate);
-          const ageInDays = Math.floor((new Date() - registrationDate) / (1000 * 60 * 60 * 24));
-          
-          let ageScore = 0;
-          let ageRisk = 'high';
-          
-          if (ageInDays < 30) {
-            ageScore = 0;
-            ageRisk = 'critical';
-          } else if (ageInDays < 90) {
-            ageScore = 5;
-            ageRisk = 'high';
-          } else if (ageInDays < 180) {
-            ageScore = 10;
-            ageRisk = 'medium';
-          } else if (ageInDays < 365) {
-            ageScore = 15;
-            ageRisk = 'low';
-          } else if (ageInDays < 730) {
-            ageScore = 20;
-            ageRisk = 'very-low';
-          } else {
-            ageScore = 25;
-            ageRisk = 'minimal';
-          }
-          
-          factors.domainAge = {
-            score: ageScore,
-            maxScore: weights.domainAge,
-            value: `${Math.floor(ageInDays / 365)} years, ${ageInDays % 365} days`,
-            risk: ageRisk,
-            details: `Domain is ${ageInDays} days old`
-          };
-          totalScore += ageScore;
+      // ---- 3. EPP status (RDAP) — 15 pts ----
+      if (rdap?.registered && Array.isArray(rdap.status)) {
+        const statuses = rdap.status.map((s) => s.toLowerCase());
+        let points = 15, level = 'low', why = 'No hold, redemption, or delete states.';
+        if (statuses.some((s) => s.includes('serverhold') || s.includes('clienthold'))) {
+          points = 0; level = 'critical';
+          why = 'Hold status — the registry/registrar has suspended resolution, often for abuse.';
+        } else if (statuses.some((s) => s.includes('pendingdelete') || s.includes('redemptionperiod'))) {
+          points = 4; level = 'high';
+          why = 'Domain is expiring or in redemption — unstable ownership.';
         }
+        factors.push({
+          key: 'status', label: 'Registry status', max: 15, points, level,
+          value: rdap.status.length ? rdap.status.join(', ') : 'none reported', why,
+        });
+      } else {
+        unknown('status', 'Registry status', 15, 'RDAP status codes unavailable.');
       }
 
-      // 2. Registrar Reputation (15 points max)
-      const trustedRegistrars = ['godaddy', 'namecheap', 'cloudflare', 'google', 'amazon', 'gandi', 'hover'];
-      const registrarName = simulatedData.port43?.toLowerCase() || '';
-      let registrarScore = 10; // Default medium trust
-      let registrarRisk = 'medium';
-      
-      if (trustedRegistrars.some(trusted => registrarName.includes(trusted))) {
-        registrarScore = 15;
-        registrarRisk = 'low';
-      } else if (registrarName.includes('private') || registrarName.includes('proxy')) {
-        registrarScore = 5;
-        registrarRisk = 'high';
+      // ---- 4. Registrar on record (RDAP) — 5 pts ----
+      if (rdap?.registered) {
+        const has = Boolean(rdap.registrar);
+        factors.push({
+          key: 'registrar', label: 'Registrar', max: 5,
+          points: has ? 5 : 0,
+          level: has ? 'low' : 'medium',
+          value: rdap.registrar || 'Not disclosed',
+          why: has
+            ? 'An identifiable sponsoring registrar is on record.'
+            : 'RDAP did not disclose a sponsoring registrar.',
+        });
+      } else {
+        unknown('registrar', 'Registrar', 5, 'RDAP registrar data unavailable.');
       }
-      
-      factors.registrar = {
-        score: registrarScore,
-        maxScore: weights.registrar,
-        value: simulatedData.port43 || 'Unknown',
-        risk: registrarRisk,
-        details: 'Registrar reputation assessment'
-      };
-      totalScore += registrarScore;
 
-      // 3. DNSSEC Status (15 points max)
-      const dnssecScore = simulatedData.secureDNS ? 15 : 0;
-      factors.dnssec = {
-        score: dnssecScore,
-        maxScore: weights.dnssec,
-        value: simulatedData.secureDNS ? 'Enabled' : 'Disabled',
-        risk: simulatedData.secureDNS ? 'low' : 'medium',
-        details: simulatedData.secureDNS ? 'DNSSEC is properly configured' : 'DNSSEC not enabled'
-      };
-      totalScore += dnssecScore;
-
-      // 4. Domain Status (15 points max)
-      let statusScore = 15;
-      let statusRisk = 'low';
-      const statuses = simulatedData.status || [];
-      
-      if (statuses.some(s => s.includes('serverHold') || s.includes('clientHold'))) {
-        statusScore = 0;
-        statusRisk = 'critical';
-      } else if (statuses.some(s => s.includes('pendingDelete') || s.includes('redemptionPeriod'))) {
-        statusScore = 5;
-        statusRisk = 'high';
-      } else if (statuses.some(s => s.includes('inactive'))) {
-        statusScore = 10;
-        statusRisk = 'medium';
+      // ---- 5. DNS infrastructure (DNS) — 15 pts ----
+      if (dns?.records) {
+        const ns = dns.records.NS || [];
+        const a = dns.records.A || [];
+        const aaaa = dns.records.AAAA || [];
+        const mx = dns.records.MX || [];
+        let points = 0;
+        if (ns.length >= 2) points += 6;
+        else if (ns.length === 1) points += 3;
+        if (a.length > 0 || aaaa.length > 0) points += 5;
+        if (mx.length > 0) points += 4;
+        const level = points >= 11 ? 'low' : points >= 6 ? 'medium' : 'high';
+        factors.push({
+          key: 'dnsinfra', label: 'DNS infrastructure', max: 15, points, level,
+          value: `${ns.length} NS · ${a.length + aaaa.length} address record(s) · ${mx.length} MX`,
+          why: 'Redundant nameservers, resolvable addresses, and mail routing indicate a real, operated zone.',
+        });
+      } else {
+        unknown('dnsinfra', 'DNS infrastructure', 15, 'DNS lookup failed.');
       }
-      
-      factors.status = {
-        score: statusScore,
-        maxScore: weights.status,
-        value: statuses.join(', ') || 'Active',
-        risk: statusRisk,
-        details: 'Domain status assessment'
-      };
-      totalScore += statusScore;
 
-      // 5. Nameservers (10 points max)
-      const nameservers = simulatedData.nameservers || [];
-      let nsScore = 10;
-      let nsRisk = 'low';
-      
-      if (nameservers.length === 0) {
-        nsScore = 0;
-        nsRisk = 'critical';
-      } else if (nameservers.length === 1) {
-        nsScore = 5;
-        nsRisk = 'medium';
-      } else if (nameservers.length >= 2) {
-        nsScore = 10;
-        nsRisk = 'low';
+      // ---- 6. TLD (client-side check) — 10 pts ----
+      {
+        const tld = tldOf(domain);
+        const suspicious = SUSPICIOUS_TLDS.includes(tld);
+        factors.push({
+          key: 'tld', label: 'TLD', max: 10,
+          points: suspicious ? 0 : 10,
+          level: suspicious ? 'high' : 'low',
+          value: `.${tld}`,
+          why: suspicious
+            ? `.${tld} appears on lists of frequently abused TLDs (does not prove abuse by itself).`
+            : `.${tld} is not on our list of frequently abused TLDs.`,
+        });
       }
-      
-      factors.nameservers = {
-        score: nsScore,
-        maxScore: weights.nameservers,
-        value: `${nameservers.length} nameserver(s)`,
-        risk: nsRisk,
-        details: nameservers.map(ns => ns.ldhName).join(', ') || 'No nameservers'
-      };
-      totalScore += nsScore;
 
-      // 6. TLD Reputation (10 points max)
-      const suspiciousTLDs = ['.tk', '.ml', '.ga', '.cf', '.click', '.download', '.review', '.top', '.win', '.bid'];
-      const premiumTLDs = ['.com', '.org', '.net', '.edu', '.gov', '.io', '.dev', '.app'];
-      const domainTLD = '.' + cleanDomain.split('.').pop();
-      
-      let tldScore = 5; // Default neutral
-      let tldRisk = 'medium';
-      
-      if (premiumTLDs.includes(domainTLD)) {
-        tldScore = 10;
-        tldRisk = 'low';
-      } else if (suspiciousTLDs.includes(domainTLD)) {
-        tldScore = 0;
-        tldRisk = 'high';
-      }
-      
-      factors.tld = {
-        score: tldScore,
-        maxScore: weights.tld,
-        value: domainTLD,
-        risk: tldRisk,
-        details: `TLD reputation for ${domainTLD}`
-      };
-      totalScore += tldScore;
-
-      // 7. Recent Updates (10 points max)
-      let updateScore = 10;
-      let updateRisk = 'low';
-      
-      if (simulatedData.events && simulatedData.events.length > 0) {
-        // Simulate last change event
-        const lastUpdate = { 
-          eventAction: 'last changed', 
-          eventDate: new Date(Date.now() - Math.random() * 90 * 24 * 60 * 60 * 1000).toISOString() 
-        };
-        
-        const updateDate = new Date(lastUpdate.eventDate);
-        const daysSinceUpdate = Math.floor((new Date() - updateDate) / (1000 * 60 * 60 * 24));
-        
-        if (daysSinceUpdate < 7) {
-          updateScore = 5;
-          updateRisk = 'medium';
-        } else if (daysSinceUpdate < 30) {
-          updateScore = 7;
-          updateRisk = 'low-medium';
+      // ---- 7. DNS blacklists (DNSBL) — 20 pts ----
+      if (dnsbl && Array.isArray(dnsbl.checks)) {
+        if (!dnsbl.resolved || dnsbl.checks.length === 0) {
+          unknown('dnsbl', 'Blacklist listings', 20, 'Domain did not resolve to an IP, so no blacklist check was possible.');
+        } else {
+          const listed = dnsbl.checks.reduce((n, c) => n + (c.listedCount || 0), 0);
+          const total = dnsbl.checks.reduce((n, c) => n + (c.total || 0), 0);
+          const listings = dnsbl.checks.flatMap((c) =>
+            (c.results || []).filter((r) => r.listed).map((r) => `${c.ip} on ${r.provider}`)
+          );
+          let points, level;
+          if (listed === 0) { points = 20; level = 'low'; }
+          else if (listed === 1) { points = 8; level = 'high'; }
+          else { points = 0; level = 'critical'; }
+          factors.push({
+            key: 'dnsbl', label: 'Blacklist listings', max: 20, points, level,
+            value: `${listed} listing(s) across ${total} checks (${dnsbl.ips?.length || 0} IP(s))`,
+            why: listed === 0
+              ? 'None of the resolved IPs appear on the queried DNS blacklists.'
+              : `Listed: ${listings.join('; ')}.`,
+          });
         }
+      } else {
+        unknown('dnsbl', 'Blacklist listings', 20, 'Blacklist check failed.');
       }
-      
-      factors.updates = {
-        score: updateScore,
-        maxScore: weights.updates,
-        value: 'Normal activity',
-        risk: updateRisk,
-        details: 'Recent update activity assessment'
-      };
-      totalScore += updateScore;
 
-      // Calculate final reputation
-      const maxPossibleScore = Object.values(weights).reduce((a, b) => a + b, 0);
-      const percentageScore = Math.round((totalScore / maxPossibleScore) * 100);
-      
-      let overallRisk = 'critical';
-      let overallRating = 'Very Poor';
-      
-      if (percentageScore >= 90) {
-        overallRisk = 'minimal';
-        overallRating = 'Excellent';
-      } else if (percentageScore >= 75) {
-        overallRisk = 'low';
-        overallRating = 'Good';
-      } else if (percentageScore >= 60) {
-        overallRisk = 'medium';
-        overallRating = 'Fair';
-      } else if (percentageScore >= 40) {
-        overallRisk = 'high';
-        overallRating = 'Poor';
+      const known = factors.filter((f) => !f.unknown);
+      if (known.length === 0) {
+        throw new Error('All data sources failed for this domain — no reputation score can be computed.');
       }
+      const earned = known.reduce((n, f) => n + f.points, 0);
+      const possible = known.reduce((n, f) => n + f.max, 0);
+      const pct = Math.round((earned / possible) * 100);
 
       setResult({
-        domain: cleanDomain,
-        totalScore,
-        maxScore: maxPossibleScore,
-        percentageScore,
-        overallRisk,
-        overallRating,
+        domain,
         factors,
-        rawData: simulatedData
+        earned,
+        possible,
+        pct,
+        ...gradeOf(pct),
+        knownCount: known.length,
+        totalCount: factors.length,
+        registered: rdap ? rdap.registered !== false : null,
       });
     } catch (err) {
       setError(err.message);
@@ -280,211 +223,103 @@ export default function DomainReputationScoring({ onClose }) {
     }
   };
 
-  const getRiskColor = (risk) => {
-    const colors = {
-      'critical': 'text-red-700 bg-red-100 border-red-300',
-      'high': 'text-orange-700 bg-orange-100 border-orange-300',
-      'medium': 'text-yellow-700 bg-yellow-100 border-yellow-300',
-      'low-medium': 'text-yellow-600 bg-yellow-50 border-yellow-200',
-      'low': 'text-green-600 bg-green-50 border-green-200',
-      'very-low': 'text-green-700 bg-green-100 border-green-300',
-      'minimal': 'text-blue-700 bg-blue-100 border-blue-300'
-    };
-    return colors[risk] || colors['medium'];
-  };
-
-  const getScoreColor = (percentage) => {
-    if (percentage >= 90) return 'text-blue-600';
-    if (percentage >= 75) return 'text-green-600';
-    if (percentage >= 60) return 'text-yellow-600';
-    if (percentage >= 40) return 'text-orange-600';
-    return 'text-red-600';
-  };
+  const barColor =
+    result?.pct >= 70 ? 'bg-green-500' : result?.pct >= 55 ? 'bg-yellow-500' : result?.pct >= 40 ? 'bg-orange-500' : 'bg-red-500';
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-      <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
-        <div className="p-6">
-          {/* Header */}
-          <div className="flex items-center justify-between mb-6">
-            <div className="flex items-center gap-3">
-              <div className="bg-green-100 p-2 rounded-lg">
-                <Shield className="w-6 h-6 text-green-600" />
-              </div>
+    <ToolShell
+      title="Domain Reputation Scoring"
+      subtitle="Score built from live RDAP, DNS, and blacklist data"
+      icon={Shield}
+      accent="green"
+      onClose={onClose}
+      width="max-w-3xl"
+    >
+      <QueryForm
+        value={target}
+        onChange={setTarget}
+        onSubmit={analyze}
+        loading={loading}
+        placeholder="Enter a domain (e.g., example.com)"
+        accent="green"
+        label="Score"
+      />
+      <ErrorNote>{error}</ErrorNote>
+
+      {result && (
+        <div className="space-y-5">
+          {result.registered === false && (
+            <InfoNote title="Not registered">
+              RDAP reports {result.domain} as not registered; scoring is limited to the factors that could still be measured.
+            </InfoNote>
+          )}
+
+          <div className="rounded-lg border-2 border-gray-200 p-5">
+            <div className="flex items-center justify-between mb-3">
               <div>
-                <h2 className="text-xl font-bold text-gray-900">Domain Reputation Scoring</h2>
-                <p className="text-gray-600">Comprehensive domain trust assessment</p>
+                <h3 className="text-xl font-bold text-gray-900">{result.domain}</h3>
+                <p className="text-sm text-gray-600">{result.label}</p>
+              </div>
+              <div className="text-right">
+                <div className="text-4xl font-bold text-gray-900">{result.grade}</div>
+                <Badge level={result.level}>{result.pct}%</Badge>
               </div>
             </div>
-            <button
-              onClick={onClose}
-              className="text-gray-400 hover:text-gray-600 text-xl font-bold"
-            >
-              ×
-            </button>
+            <div className="bg-gray-200 rounded-full h-3 overflow-hidden">
+              <div className={`h-full ${barColor}`} style={{ width: `${result.pct}%` }} />
+            </div>
+            <p className="mt-3 text-sm text-gray-600">
+              {result.earned} of {result.possible} points, from {result.knownCount} of {result.totalCount} factors.
+              {result.knownCount < result.totalCount &&
+                ' Factors that could not be measured are excluded from the score.'}
+            </p>
           </div>
 
-          {/* Form */}
-          <form onSubmit={calculateReputationScore} className="mb-6">
-            <div className="flex gap-3">
-              <input
-                type="text"
-                value={domain}
-                onChange={(e) => setDomain(e.target.value)}
-                placeholder="Enter domain name (e.g., example.com)"
-                className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                disabled={loading}
-              />
-              <button
-                type="submit"
-                disabled={loading || !domain.trim()}
-                className="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
-              >
-                {loading ? (
-                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                ) : (
-                  <Shield className="w-4 h-4" />
+          <div className="grid grid-cols-3 gap-3">
+            <StatCard label="Score" value={`${result.pct}%`} level={result.level} />
+            <StatCard label="Points" value={`${result.earned}/${result.possible}`} />
+            <StatCard label="Factors measured" value={`${result.knownCount}/${result.totalCount}`} />
+          </div>
+
+          <div className="space-y-3">
+            {result.factors.map((f) => (
+              <div key={f.key} className="bg-white rounded-lg border border-gray-200 p-4">
+                <div className="flex items-center justify-between mb-1">
+                  <div className="flex items-center gap-2">
+                    <h4 className="font-semibold text-gray-900">{f.label}</h4>
+                    <Badge level={f.unknown ? 'unknown' : f.level}>
+                      {f.unknown ? 'unknown' : f.level}
+                    </Badge>
+                  </div>
+                  <span className="text-sm font-bold text-gray-900">
+                    {f.unknown ? '—' : `${f.points}/${f.max}`}
+                  </span>
+                </div>
+                {!f.unknown && (
+                  <p className="text-sm text-gray-800">
+                    <span className="font-medium">Value:</span> {f.value}
+                  </p>
                 )}
-                {loading ? 'Analyzing...' : 'Calculate Score'}
-              </button>
-            </div>
-          </form>
-
-          {/* Error */}
-          {error && (
-            <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg flex items-center gap-3">
-              <AlertTriangle className="w-5 h-5 text-red-500" />
-              <p className="text-red-700">{error}</p>
-            </div>
-          )}
-
-          {/* Results */}
-          {result && (
-            <div className="space-y-6">
-              {/* Overall Score */}
-              <div className={`rounded-lg p-6 border-2 ${getRiskColor(result.overallRisk)}`}>
-                <div className="flex items-center justify-between mb-4">
-                  <div>
-                    <h3 className="text-2xl font-bold">{result.domain}</h3>
-                    <p className="text-sm opacity-75">Domain Reputation Analysis</p>
+                <p className="text-sm text-gray-600 mt-1">{f.why}</p>
+                {!f.unknown && (
+                  <div className="mt-2 bg-gray-200 rounded-full h-1.5 overflow-hidden">
+                    <div
+                      className={`h-full ${f.points / f.max >= 0.7 ? 'bg-green-500' : f.points / f.max >= 0.4 ? 'bg-yellow-500' : 'bg-red-500'}`}
+                      style={{ width: `${(f.points / f.max) * 100}%` }}
+                    />
                   </div>
-                  <div className="text-right">
-                    <div className={`text-4xl font-bold ${getScoreColor(result.percentageScore)}`}>
-                      {result.percentageScore}%
-                    </div>
-                    <p className="text-sm font-semibold">{result.overallRating}</p>
-                  </div>
-                </div>
-                
-                {/* Score Bar */}
-                <div className="bg-gray-200 rounded-full h-4 overflow-hidden">
-                  <div 
-                    className={`h-full transition-all duration-1000 ${
-                      result.percentageScore >= 90 ? 'bg-blue-500' :
-                      result.percentageScore >= 75 ? 'bg-green-500' :
-                      result.percentageScore >= 60 ? 'bg-yellow-500' :
-                      result.percentageScore >= 40 ? 'bg-orange-500' :
-                      'bg-red-500'
-                    }`}
-                    style={{ width: `${result.percentageScore}%` }}
-                  />
-                </div>
-                
-                <div className="mt-4 flex items-center justify-between text-sm">
-                  <span>Total Score: {result.totalScore}/{result.maxScore}</span>
-                  <span className="font-semibold">Risk Level: {result.overallRisk.replace('-', ' ').toUpperCase()}</span>
-                </div>
+                )}
               </div>
+            ))}
+          </div>
 
-              {/* Factor Breakdown */}
-              <div className="bg-gray-50 rounded-lg p-6">
-                <h3 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
-                  <Activity className="w-5 h-5 text-gray-600" />
-                  Reputation Factors Analysis
-                </h3>
-                
-                <div className="space-y-3">
-                  {Object.entries(result.factors).map(([key, factor]) => (
-                    <div key={key} className="bg-white rounded-lg p-4 border border-gray-200">
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center gap-3">
-                          <h4 className="font-semibold text-gray-900 capitalize">
-                            {key.replace(/([A-Z])/g, ' $1').trim()}
-                          </h4>
-                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${getRiskColor(factor.risk)}`}>
-                            {factor.risk.replace('-', ' ').toUpperCase()}
-                          </span>
-                        </div>
-                        <div className="text-right">
-                          <span className="font-bold">{factor.score}</span>
-                          <span className="text-gray-500">/{factor.maxScore}</span>
-                        </div>
-                      </div>
-                      
-                      <div className="text-sm text-gray-600">
-                        <p><strong>Value:</strong> {factor.value}</p>
-                        <p className="mt-1">{factor.details}</p>
-                      </div>
-                      
-                      {/* Mini progress bar */}
-                      <div className="mt-2 bg-gray-200 rounded-full h-2 overflow-hidden">
-                        <div 
-                          className={`h-full ${
-                            factor.score / factor.maxScore >= 0.8 ? 'bg-green-500' :
-                            factor.score / factor.maxScore >= 0.5 ? 'bg-yellow-500' :
-                            'bg-red-500'
-                          }`}
-                          style={{ width: `${(factor.score / factor.maxScore) * 100}%` }}
-                        />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Recommendations */}
-              <div className="bg-blue-50 rounded-lg p-6 border border-blue-200">
-                <h3 className="font-semibold text-blue-900 mb-3 flex items-center gap-2">
-                  <Info className="w-5 h-5" />
-                  Security Recommendations
-                </h3>
-                <ul className="space-y-2 text-sm text-blue-800">
-                  {!result.factors.dnssec || result.factors.dnssec.score === 0 ? (
-                    <li className="flex items-start gap-2">
-                      <span>•</span>
-                      <span>Enable DNSSEC to protect against DNS spoofing attacks</span>
-                    </li>
-                  ) : null}
-                  {result.factors.domainAge && result.factors.domainAge.score < 15 ? (
-                    <li className="flex items-start gap-2">
-                      <span>•</span>
-                      <span>New domain detected - Exercise caution and verify legitimacy</span>
-                    </li>
-                  ) : null}
-                  {result.factors.nameservers && result.factors.nameservers.score < 10 ? (
-                    <li className="flex items-start gap-2">
-                      <span>•</span>
-                      <span>Configure redundant nameservers for better reliability</span>
-                    </li>
-                  ) : null}
-                  {result.factors.tld && result.factors.tld.score === 0 ? (
-                    <li className="flex items-start gap-2">
-                      <span>•</span>
-                      <span>Domain uses a commonly abused TLD - Verify ownership carefully</span>
-                    </li>
-                  ) : null}
-                  {result.percentageScore >= 75 ? (
-                    <li className="flex items-start gap-2">
-                      <CheckCircle className="w-4 h-4 text-green-600" />
-                      <span>This domain shows good reputation indicators</span>
-                    </li>
-                  ) : null}
-                </ul>
-              </div>
-            </div>
-          )}
+          <InfoNote title="How this score works">
+            Every number above comes from live RDAP, DNS, and DNSBL queries made just now — nothing is
+            simulated. This is an infrastructure-hygiene score, not a threat-intelligence verdict: a
+            low score means weak trust signals, not confirmed abuse.
+          </InfoNote>
         </div>
-      </div>
-    </div>
+      )}
+    </ToolShell>
   );
 }

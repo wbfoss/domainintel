@@ -1,66 +1,37 @@
 'use client';
 
 import { useState } from 'react';
-import { Clock, Calendar, AlertCircle, CheckCircle, Search } from 'lucide-react';
-import { safeJsonParse } from "../../utils/security-tools";
+import { Clock, Calendar, AlertCircle, CheckCircle, Server } from 'lucide-react';
+import { callTool, validateDomain } from '../../utils/security-tools';
+import { ToolShell, QueryForm, ErrorNote, InfoNote, Badge, StatCard, CopyButton } from './_shared';
+
+function formatDate(iso) {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
+}
 
 export default function DomainAgeCalculator({ onClose }) {
-  const [domain, setDomain] = useState('');
+  const [target, setTarget] = useState('');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState('');
 
-  const calculateDomainAge = async (e) => {
-    e.preventDefault();
-    if (!domain.trim()) return;
-
-    setLoading(true);
+  const run = async () => {
     setError('');
     setResult(null);
-
+    let domain;
     try {
-      // Validate domain format - allow anything.extension format
-      const cleanDomain = domain.trim();
-      if (!/^[a-zA-Z0-9][a-zA-Z0-9.-]*[a-zA-Z0-9]\.[a-zA-Z]{2,}$/.test(cleanDomain)) {
-        throw new Error('Please enter a valid domain name (e.g., example.com)');
-      }
-
-      // For now, simulate domain age calculation with realistic data
-      // In production, this would use the RDAP API properly
-      const registrationDate = new Date(Date.now() - Math.random() * 365 * 24 * 60 * 60 * 1000 * 10); // Random date within last 10 years
-      const now = new Date();
-      const ageInDays = Math.floor((now - registrationDate) / (1000 * 60 * 60 * 24));
-      const ageInYears = Math.floor(ageInDays / 365);
-      const remainingDays = ageInDays % 365;
-
-      const isNewDomain = ageInDays < 30;
-      const riskLevel = ageInDays < 30 ? 'high' : ageInDays < 90 ? 'medium' : 'low';
-
-      const simulatedEvents = [
-        {
-          eventAction: 'registration',
-          eventDate: registrationDate.toISOString()
-        },
-        {
-          eventAction: 'last update of RDAP database',
-          eventDate: new Date(Date.now() - Math.random() * 30 * 24 * 60 * 60 * 1000).toISOString()
-        }
-      ];
-
-      const data = {
-        events: simulatedEvents
-      };
-
-      setResult({
-        domain: cleanDomain,
-        registrationDate: registrationDate.toLocaleDateString(),
-        ageInDays,
-        ageInYears,
-        remainingDays,
-        isNewDomain,
-        riskLevel,
-        events: simulatedEvents
-      });
+      domain = validateDomain(target);
+    } catch (err) {
+      setError(err.message);
+      return;
+    }
+    setLoading(true);
+    try {
+      const data = await callTool('rdap', { target: domain });
+      setResult({ domain, ...data });
     } catch (err) {
       setError(err.message);
     } finally {
@@ -68,160 +39,159 @@ export default function DomainAgeCalculator({ onClose }) {
     }
   };
 
-  const getRiskColor = (level) => {
-    switch (level) {
-      case 'high': return 'text-red-600 bg-red-50 border-red-200';
-      case 'medium': return 'text-yellow-600 bg-yellow-50 border-yellow-200';
-      case 'low': return 'text-green-600 bg-green-50 border-green-200';
-      default: return 'text-gray-600 bg-gray-50 border-gray-200';
-    }
-  };
+  // All figures below come straight from the RDAP response.
+  const ageInDays = typeof result?.ageInDays === 'number' ? result.ageInDays : null;
+  const ageYears = ageInDays !== null ? Math.floor(ageInDays / 365) : null;
+  const ageRemDays = ageInDays !== null ? ageInDays % 365 : null;
+  const riskLevel =
+    ageInDays === null ? 'unknown' : ageInDays < 30 ? 'critical' : ageInDays < 90 ? 'medium' : 'low';
+  const riskCopy = {
+    critical: 'Registered less than 30 days ago. Very new domains are disproportionately used in phishing and scam campaigns — treat with caution.',
+    medium: 'Registered less than 90 days ago. Recently registered domains warrant extra verification.',
+    low: 'This domain has an established registration history.',
+    unknown: 'The registry did not return a registration date, so age-based risk cannot be assessed.',
+  }[riskLevel];
+  const riskBox = {
+    critical: 'bg-red-50 border-red-200 text-red-800',
+    medium: 'bg-yellow-50 border-yellow-200 text-yellow-800',
+    low: 'bg-green-50 border-green-200 text-green-800',
+    unknown: 'bg-gray-50 border-gray-200 text-gray-700',
+  }[riskLevel];
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-      <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-        <div className="p-6">
-          {/* Header */}
-          <div className="flex items-center justify-between mb-6">
-            <div className="flex items-center gap-3">
-              <div className="bg-blue-100 p-2 rounded-lg">
-                <Clock className="w-6 h-6 text-blue-600" />
-              </div>
-              <div>
-                <h2 className="text-xl font-bold text-gray-900">Domain Age Calculator</h2>
-                <p className="text-gray-600">Calculate exact domain age and flag new domains</p>
-              </div>
-            </div>
-            <button
-              onClick={onClose}
-              className="text-gray-400 hover:text-gray-600 text-xl font-bold"
-            >
-              ×
-            </button>
-          </div>
+    <ToolShell
+      title="Domain Age Calculator"
+      subtitle="Exact domain age from live RDAP registry data"
+      icon={Clock}
+      accent="blue"
+      onClose={onClose}
+    >
+      <QueryForm
+        value={target}
+        onChange={setTarget}
+        onSubmit={run}
+        loading={loading}
+        placeholder="Enter domain name (e.g., example.com)"
+        accent="blue"
+        label="Calculate Age"
+      />
 
-          {/* Form */}
-          <form onSubmit={calculateDomainAge} className="mb-6">
-            <div className="flex gap-3">
-              <input
-                type="text"
-                value={domain}
-                onChange={(e) => setDomain(e.target.value)}
-                placeholder="Enter domain name (e.g., example.com)"
-                className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                disabled={loading}
-              />
-              <button
-                type="submit"
-                disabled={loading || !domain.trim()}
-                className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
-              >
-                {loading ? (
-                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                ) : (
-                  <Search className="w-4 h-4" />
-                )}
-                {loading ? 'Analyzing...' : 'Calculate Age'}
-              </button>
-            </div>
-          </form>
+      <ErrorNote>{error}</ErrorNote>
 
-          {/* Error */}
-          {error && (
-            <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg flex items-center gap-3">
-              <AlertCircle className="w-5 h-5 text-red-500" />
-              <p className="text-red-700">{error}</p>
-            </div>
-          )}
-
-          {/* Results */}
-          {result && (
-            <div className="space-y-4">
-              {/* Domain Info */}
-              <div className="bg-gray-50 rounded-lg p-4">
-                <h3 className="font-semibold text-gray-900 mb-2 flex items-center gap-2">
-                  <Calendar className="w-5 h-5 text-blue-600" />
-                  Domain Age Analysis
-                </h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <p className="text-sm text-gray-600">Domain</p>
-                    <p className="font-semibold text-gray-900">{result.domain}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-600">Registration Date</p>
-                    <p className="font-semibold text-gray-900">{result.registrationDate}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-600">Age in Days</p>
-                    <p className="font-semibold text-gray-900">{result.ageInDays.toLocaleString()} days</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-600">Age in Years</p>
-                    <p className="font-semibold text-gray-900">
-                      {result.ageInYears} years, {result.remainingDays} days
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Security Assessment */}
-              <div className={`rounded-lg p-4 border ${getRiskColor(result.riskLevel)}`}>
-                <h3 className="font-semibold mb-2 flex items-center gap-2">
-                  {result.isNewDomain ? (
-                    <AlertCircle className="w-5 h-5" />
-                  ) : (
-                    <CheckCircle className="w-5 h-5" />
-                  )}
-                  Security Assessment
-                </h3>
-                <div className="space-y-2">
-                  <p className="font-medium">
-                    Risk Level: <span className="capitalize">{result.riskLevel}</span>
-                  </p>
-                  {result.isNewDomain && (
-                    <div className="text-sm">
-                      <p className="font-medium text-red-700">⚠️ New Domain Alert</p>
-                      <p>This domain is less than 30 days old and should be treated with caution.</p>
-                    </div>
-                  )}
-                  {result.riskLevel === 'medium' && (
-                    <div className="text-sm">
-                      <p className="font-medium text-yellow-700">⚠️ Recently Registered</p>
-                      <p>This domain is less than 90 days old. Exercise caution.</p>
-                    </div>
-                  )}
-                  {result.riskLevel === 'low' && (
-                    <div className="text-sm">
-                      <p className="font-medium text-green-700">✓ Established Domain</p>
-                      <p>This domain has been registered for a sufficient period.</p>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Additional Events */}
-              {result.events && result.events.length > 1 && (
-                <div className="bg-gray-50 rounded-lg p-4">
-                  <h3 className="font-semibold text-gray-900 mb-3">Domain Events History</h3>
-                  <div className="space-y-2">
-                    {result.events.map((event, index) => (
-                      <div key={index} className="flex justify-between items-center py-2 border-b border-gray-200 last:border-b-0">
-                        <span className="text-sm font-medium text-gray-700 capitalize">
-                          {event.eventAction.replace(/([A-Z])/g, ' $1').trim()}
-                        </span>
-                        <span className="text-sm text-gray-600">
-                          {new Date(event.eventDate).toLocaleDateString()}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
+      {result && !result.registered && (
+        <div className="p-4 bg-gray-50 border border-gray-200 rounded-lg">
+          <div className="flex items-start gap-3">
+            <AlertCircle className="w-5 h-5 text-gray-500 mt-0.5 shrink-0" />
+            <div className="text-sm text-gray-700">
+              <p className="font-semibold text-gray-900 mb-1">
+                {result.domain} — not registered / no RDAP record
+              </p>
+              <p>
+                The registry returned no RDAP record for this domain. It is either unregistered or its
+                registry does not publish RDAP data.
+              </p>
+              {result.status?.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {result.status.map((s, i) => (
+                    <Badge key={i} level="unknown">{s}</Badge>
+                  ))}
                 </div>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {result && result.registered && (
+        <div className="space-y-4">
+          {ageInDays !== null ? (
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <StatCard label="Age in Days" value={ageInDays.toLocaleString()} level={riskLevel} />
+              <StatCard label="Age" value={`${ageYears}y ${ageRemDays}d`} level={riskLevel} />
+              <StatCard label="Risk Level" value={riskLevel.toUpperCase()} level={riskLevel} />
+            </div>
+          ) : (
+            <InfoNote title="No registration date">
+              This registry's RDAP record does not include a registration event, so the exact age
+              cannot be computed.
+            </InfoNote>
+          )}
+
+          <div className={`rounded-lg p-4 border ${riskBox}`}>
+            <h3 className="font-semibold mb-1 flex items-center gap-2">
+              {riskLevel === 'low' ? <CheckCircle className="w-5 h-5" /> : <AlertCircle className="w-5 h-5" />}
+              Age-Based Risk Assessment
+            </h3>
+            <p className="text-sm">{riskCopy}</p>
+          </div>
+
+          <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+            <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+              <Calendar className="w-5 h-5 text-blue-600" />
+              Registration Details
+            </h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-3 text-sm">
+              <div>
+                <p className="text-gray-600">Domain</p>
+                <p className="font-semibold text-gray-900 flex items-center gap-2">
+                  {result.ldhName || result.domain} <CopyButton text={result.ldhName || result.domain} />
+                </p>
+              </div>
+              <div>
+                <p className="text-gray-600">Registrar</p>
+                <p className="font-semibold text-gray-900">{result.registrar || 'Not disclosed'}</p>
+              </div>
+              <div>
+                <p className="text-gray-600">Registration Date</p>
+                <p className="font-semibold text-gray-900">{formatDate(result.registrationDate) || 'Unknown'}</p>
+              </div>
+              <div>
+                <p className="text-gray-600">Expiration Date</p>
+                <p className="font-semibold text-gray-900">{formatDate(result.expirationDate) || 'Unknown'}</p>
+              </div>
+              <div>
+                <p className="text-gray-600">Last Changed</p>
+                <p className="font-semibold text-gray-900">{formatDate(result.lastChanged) || 'Unknown'}</p>
+              </div>
+              <div>
+                <p className="text-gray-600">DNSSEC</p>
+                <p className="font-semibold flex items-center gap-1.5">
+                  {result.dnssec ? (
+                    <><CheckCircle className="w-4 h-4 text-green-600" /> Signed</>
+                  ) : (
+                    <><AlertCircle className="w-4 h-4 text-yellow-600" /> Unsigned</>
+                  )}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {result.status?.length > 0 && (
+            <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+              <h3 className="font-semibold text-gray-900 mb-2 text-sm">EPP Status</h3>
+              <div className="flex flex-wrap gap-1.5">
+                {result.status.map((s, i) => (
+                  <Badge key={i} level="info">{s}</Badge>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {result.nameservers?.length > 0 && (
+            <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+              <h3 className="font-semibold text-gray-900 mb-2 text-sm flex items-center gap-2">
+                <Server className="w-4 h-4 text-blue-600" />
+                Nameservers ({result.nameservers.length})
+              </h3>
+              <ul className="text-sm font-mono text-gray-700 space-y-1">
+                {result.nameservers.map((ns, i) => (
+                  <li key={i}>{ns.toLowerCase()}</li>
+                ))}
+              </ul>
+            </div>
           )}
         </div>
-      </div>
-    </div>
+      )}
+    </ToolShell>
   );
 }

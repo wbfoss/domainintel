@@ -8,6 +8,10 @@
       "maxDuration": 30,
       "memory": 512
     },
+    "app/api/tools/route.js": {
+      "maxDuration": 30,
+      "memory": 512
+    },
     "app/api/og/route.tsx": {
       "maxDuration": 10,
       "memory": 256

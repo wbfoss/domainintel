@@ -1,574 +1,333 @@
 'use client';
 
 import { useState } from 'react';
-import { Lock, Shield, AlertTriangle, CheckCircle, XCircle, Info, Globe } from 'lucide-react';
+import { Lock } from 'lucide-react';
+import {
+  ToolShell,
+  QueryForm,
+  ErrorNote,
+  InfoNote,
+  Badge,
+  StatCard,
+  Mono,
+  IssueList,
+} from './_shared';
+import { callTool, validateDomain } from '../../utils/security-tools';
+
+const MODERN_PROTOCOLS = ['TLSv1.3', 'TLSv1.2'];
+
+function protocolLevel(protocol) {
+  if (protocol === 'TLSv1.3') return 'low';
+  if (protocol === 'TLSv1.2') return 'info';
+  return 'critical';
+}
+
+function computeAssessment(tls) {
+  const issues = [];
+  let score = 100;
+
+  const protocol = tls.protocol || '';
+  if (protocol === 'TLSv1.3') {
+    // best current protocol, no penalty
+  } else if (protocol === 'TLSv1.2') {
+    score -= 5;
+    issues.push({
+      severity: 'info',
+      message: 'Negotiated TLS 1.2 — still acceptable, but TLS 1.3 is preferred.',
+    });
+  } else {
+    score -= 40;
+    issues.push({
+      severity: 'critical',
+      message: `Negotiated ${protocol || 'an unknown protocol'} — outdated and considered weak. TLS 1.2+ is required.`,
+    });
+  }
+
+  const cert = tls.certificate || {};
+  if (cert.expired) {
+    score -= 50;
+    issues.push({
+      severity: 'critical',
+      message: `Certificate is EXPIRED (valid until ${cert.validTo}).`,
+    });
+  } else if (typeof cert.daysRemaining === 'number' && cert.daysRemaining < 30) {
+    score -= 15;
+    issues.push({
+      severity: 'medium',
+      message: `Certificate expires in ${cert.daysRemaining} day${cert.daysRemaining === 1 ? '' : 's'} — renew soon.`,
+    });
+  }
+
+  if (!tls.authorized) {
+    score -= 40;
+    issues.push({
+      severity: 'critical',
+      message: `Certificate chain failed validation${tls.authError ? `: ${tls.authError}` : '.'}`,
+    });
+  }
+
+  score = Math.max(0, score);
+  let grade;
+  if (score >= 90) grade = 'A';
+  else if (score >= 75) grade = 'B';
+  else if (score >= 60) grade = 'C';
+  else if (score >= 40) grade = 'D';
+  else grade = 'F';
+  const level =
+    score >= 90 ? 'low' : score >= 60 ? 'medium' : score >= 40 ? 'high' : 'critical';
+  return { grade, score, level, issues };
+}
+
+function Row({ label, value, badge }) {
+  return (
+    <div className="flex items-start justify-between gap-4 py-2 border-b border-gray-100 last:border-b-0">
+      <span className="text-sm text-gray-600 shrink-0">{label}</span>
+      <span className="text-sm text-gray-900 text-right break-all flex items-center gap-2 justify-end">
+        {value ?? '—'}
+        {badge}
+      </span>
+    </div>
+  );
+}
+
+const HEADER_CHECKS = [
+  { key: 'hsts', label: 'Strict-Transport-Security (HSTS)' },
+  { key: 'csp', label: 'Content-Security-Policy' },
+  { key: 'xFrameOptions', label: 'X-Frame-Options' },
+  { key: 'xContentTypeOptions', label: 'X-Content-Type-Options' },
+  { key: 'referrerPolicy', label: 'Referrer-Policy' },
+];
 
 export default function SSLConfigAssessment({ onClose }) {
-  const [domain, setDomain] = useState('');
+  const [target, setTarget] = useState('');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState('');
 
-  const assessSSLConfig = async (e) => {
-    e.preventDefault();
-    if (!domain.trim()) return;
-
-    setLoading(true);
+  const assess = async () => {
     setError('');
     setResult(null);
-
+    let domain;
     try {
-      // Clean domain (remove protocol if present)
-      let cleanDomain = domain.trim().toLowerCase();
-      cleanDomain = cleanDomain.replace(/^https?:\/\//, '').replace(/\/$/, '');
-      
-      // Validate domain format - allow anything.extension format
-      if (!/^[a-zA-Z0-9][a-zA-Z0-9.-]*[a-zA-Z0-9]\.[a-zA-Z]{2,}$/.test(cleanDomain)) {
-        throw new Error('Please enter a valid domain name (e.g., example.com)');
-      }
-      
-      // Perform real SSL analysis
-      const sslData = await analyzeSSLConfiguration(cleanDomain);
-      
-      setResult(sslData);
+      domain = validateDomain(target);
     } catch (err) {
-      setError(err.message || 'Failed to assess SSL configuration');
+      setError(err.message);
+      return;
+    }
+    setLoading(true);
+    try {
+      const tls = await callTool('tls', { target: domain });
+      let http = null;
+      let httpError = '';
+      try {
+        http = await callTool('http', { target: domain });
+      } catch (err) {
+        httpError = err.message;
+      }
+      if (!tls.reachable) {
+        setResult({ domain, tls, http: null, httpError: '', assessment: null });
+      } else {
+        setResult({ domain, tls, http, httpError, assessment: computeAssessment(tls) });
+      }
+    } catch (err) {
+      setError(err.message);
     } finally {
       setLoading(false);
     }
   };
 
-  // Real SSL analysis function
-  const analyzeSSLConfiguration = async (domain) => {
-    const analysis = {
-      domain,
-      timestamp: new Date().toISOString(),
-      grade: 'Unknown',
-      score: 0,
-      
-      certificate: {
-        valid: false,
-        issuer: 'Unknown',
-        subject: domain,
-        validFrom: null,
-        validTo: null,
-        daysRemaining: 0,
-        signatureAlgorithm: 'Unknown',
-        keySize: 0,
-        type: 'Unknown',
-        san: [],
-        transparency: false
-      },
-      
-      protocols: {
-        ssl2: { supported: false, secure: true },
-        ssl3: { supported: false, secure: true },
-        tls10: { supported: false, secure: false },
-        tls11: { supported: false, secure: false },
-        tls12: { supported: false, secure: true },
-        tls13: { supported: false, secure: true }
-      },
-      
-      cipherSuites: {
-        strong: [],
-        weak: [],
-        deprecated: []
-      },
-      
-      vulnerabilities: {
-        heartbleed: { vulnerable: false, severity: 'none' },
-        poodle: { vulnerable: false, severity: 'none' },
-        freak: { vulnerable: false, severity: 'none' },
-        logjam: { vulnerable: false, severity: 'none' },
-        drown: { vulnerable: false, severity: 'none' },
-        beast: { vulnerable: false, severity: 'none' },
-        crime: { vulnerable: false, severity: 'none' }
-      },
-      
-      features: {
-        hsts: { 
-          enabled: false, 
-          maxAge: 0,
-          includeSubdomains: false,
-          preload: false
-        },
-        hpkp: { enabled: false },
-        ocspStapling: { enabled: false },
-        sniRequired: false,
-        forwardSecrecy: { supported: false, percentage: 0 },
-        sessionResumption: { supported: false, type: 'none' },
-        compressionSupported: false,
-        npnSupported: false,
-        alpnSupported: false,
-        http2Supported: false
-      },
-      
-      recommendations: []
-    };
-
-    try {
-      // Simulate SSL configuration analysis with realistic data
-      // In production, this would use backend services to analyze SSL configuration
-      
-      // Simulate certificate validation
-      analysis.certificate.valid = Math.random() > 0.1; // 90% chance of valid cert
-      if (analysis.certificate.valid) {
-        analysis.score += 20;
-        
-        // Simulate security headers
-        const hasHSTS = Math.random() > 0.3; // 70% chance of HSTS
-        if (hasHSTS) {
-          analysis.features.hsts.enabled = true;
-          analysis.features.hsts.maxAge = 31536000; // 1 year
-          analysis.features.hsts.includeSubdomains = Math.random() > 0.5;
-          analysis.features.hsts.preload = Math.random() > 0.7;
-          analysis.score += 15;
-        }
-        
-        // Simulate other security headers
-        analysis.features.hpkp.enabled = Math.random() > 0.8; // Rare
-        analysis.features.ocspStapling.enabled = Math.random() > 0.4; // 60% chance
-        
-        // Simulate certificate details (in production, extract from actual certificate)
-        analysis.certificate.issuer = 'Let\'s Encrypt Authority X3';
-        analysis.certificate.signatureAlgorithm = 'SHA256withRSA';
-        analysis.certificate.keySize = 2048;
-        analysis.certificate.type = 'DV';
-        analysis.certificate.san = [domain, `www.${domain}`];
-        analysis.certificate.validFrom = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-        analysis.certificate.validTo = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString();
-        analysis.certificate.daysRemaining = 60;
-        analysis.certificate.transparency = true;
-        
-        // Simulate protocol support based on typical modern configurations
-        analysis.protocols.tls12.supported = true;
-        analysis.protocols.tls13.supported = true;
-        analysis.score += 25;
-        
-        // Simulate strong cipher suites
-        analysis.cipherSuites.strong = [
-          'TLS_AES_256_GCM_SHA384',
-          'TLS_CHACHA20_POLY1305_SHA256',
-          'TLS_AES_128_GCM_SHA256',
-          'ECDHE-RSA-AES256-GCM-SHA384'
-        ];
-        analysis.score += 20;
-        
-        // Simulate modern features
-        analysis.features.forwardSecrecy.supported = true;
-        analysis.features.forwardSecrecy.percentage = 100;
-        analysis.features.sessionResumption.supported = true;
-        analysis.features.sessionResumption.type = 'tickets';
-        analysis.features.alpnSupported = true;
-        analysis.features.http2Supported = true;
-        analysis.score += 10;
-      } else {
-        // Simulate case where certificate is invalid
-        analysis.certificate.valid = false;
-        analysis.score = 0;
-        analysis.recommendations.push({
-          severity: 'critical',
-          message: 'SSL certificate is invalid or HTTPS is not properly configured',
-          category: 'certificate'
-        });
-      }
-    } catch (error) {
-      // Handle simulation errors gracefully
-      console.warn('SSL simulation error:', error.message);
-    }
-    
-    // Update final analysis properties
-    analysis.domain = domain;
-    analysis.timestamp = new Date().toISOString();
-    
-    // Generate recommendations based on analysis
-    
-    // Generate recommendations based on analysis
-    const recommendations = [];
-    
-    if (analysis.certificate.daysRemaining < 30) {
-      recommendations.push({
-        severity: 'high',
-        message: 'Certificate expires soon - renew within 30 days',
-        category: 'certificate'
-      });
-    }
-    
-    if (analysis.certificate.keySize < 2048) {
-      recommendations.push({
-        severity: 'high',
-        message: 'Use at least 2048-bit RSA keys',
-        category: 'certificate'
-      });
-    }
-    
-    if (analysis.protocols.tls10.supported || analysis.protocols.tls11.supported) {
-      recommendations.push({
-        severity: 'medium',
-        message: 'Disable TLS 1.0 and TLS 1.1 - they are deprecated',
-        category: 'protocol'
-      });
-    }
-    
-    if (!analysis.protocols.tls13.supported) {
-      recommendations.push({
-        severity: 'low',
-        message: 'Enable TLS 1.3 for better performance and security',
-        category: 'protocol'
-      });
-    }
-    
-    if (!analysis.features.hsts.enabled) {
-      recommendations.push({
-        severity: 'high',
-        message: 'Enable HSTS to prevent protocol downgrade attacks',
-        category: 'headers'
-      });
-    }
-    
-    if (analysis.features.hsts.enabled && !analysis.features.hsts.preload) {
-      recommendations.push({
-        severity: 'low',
-        message: 'Consider HSTS preloading for maximum security',
-        category: 'headers'
-      });
-    }
-    
-    if (!analysis.features.ocspStapling.enabled) {
-      recommendations.push({
-        severity: 'medium',
-        message: 'Enable OCSP stapling for better performance',
-        category: 'performance'
-      });
-    }
-    
-    analysis.recommendations = recommendations;
-    
-    // Calculate final grade based on various factors
-    let score = 100;
-    
-    // Deduct points for vulnerabilities
-    Object.values(analysis.vulnerabilities).forEach(vuln => {
-      if (vuln.vulnerable) score -= 20;
-    });
-    
-    // Deduct for weak protocols
-    if (analysis.protocols.ssl2.supported || analysis.protocols.ssl3.supported) score -= 30;
-    if (analysis.protocols.tls10.supported || analysis.protocols.tls11.supported) score -= 10;
-    
-    // Deduct for missing features
-    if (!analysis.features.hsts.enabled) score -= 10;
-    if (!analysis.features.forwardSecrecy.supported) score -= 10;
-    if (!analysis.protocols.tls13.supported) score -= 5;
-    
-    // Add points for good features
-    if (analysis.features.hsts.preload) score += 5;
-    if (analysis.features.http2Supported) score += 5;
-    
-    score = Math.max(0, Math.min(100, score));
-    analysis.score = score;
-    
-    // Assign grade based on score
-    if (score >= 90) analysis.grade = 'A+';
-    else if (score >= 85) analysis.grade = 'A';
-    else if (score >= 80) analysis.grade = 'A-';
-    else if (score >= 75) analysis.grade = 'B+';
-    else if (score >= 70) analysis.grade = 'B';
-    else if (score >= 65) analysis.grade = 'B-';
-    else if (score >= 60) analysis.grade = 'C+';
-    else if (score >= 55) analysis.grade = 'C';
-    else if (score >= 50) analysis.grade = 'C-';
-    else if (score >= 45) analysis.grade = 'D+';
-    else if (score >= 40) analysis.grade = 'D';
-    else if (score >= 35) analysis.grade = 'D-';
-    else analysis.grade = 'F';
-    
-    return analysis;
-  };
-
-  const getGradeColor = (grade) => {
-    if (grade.startsWith('A')) return 'text-green-600 bg-green-50 border-green-300';
-    if (grade.startsWith('B')) return 'text-blue-600 bg-blue-50 border-blue-300';
-    if (grade.startsWith('C')) return 'text-yellow-600 bg-yellow-50 border-yellow-300';
-    if (grade.startsWith('D')) return 'text-orange-600 bg-orange-50 border-orange-300';
-    return 'text-red-600 bg-red-50 border-red-300';
-  };
-
-  const getSeverityColor = (severity) => {
-    const colors = {
-      high: 'text-red-700 bg-red-50',
-      medium: 'text-yellow-700 bg-yellow-50',
-      low: 'text-blue-700 bg-blue-50',
-      none: 'text-green-700 bg-green-50'
-    };
-    return colors[severity] || colors.low;
-  };
+  const cert = result?.tls?.certificate;
+  const headers = result?.http?.securityHeaders;
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-      <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
-        <div className="p-6">
-          {/* Header */}
-          <div className="flex items-center justify-between mb-6">
-            <div className="flex items-center gap-3">
-              <div className="bg-green-100 p-2 rounded-lg">
-                <Lock className="w-6 h-6 text-green-600" />
-              </div>
-              <div>
-                <h2 className="text-xl font-bold text-gray-900">SSL Configuration Assessment</h2>
-                <p className="text-gray-600">Analyze SSL/TLS security configuration</p>
-              </div>
-            </div>
-            <button
-              onClick={onClose}
-              className="text-gray-400 hover:text-gray-600 text-xl font-bold"
-            >
-              ×
-            </button>
+    <ToolShell
+      title="SSL/TLS Configuration Assessment"
+      subtitle="Live TLS handshake and certificate inspection"
+      icon={Lock}
+      accent="green"
+      onClose={onClose}
+    >
+      <QueryForm
+        value={target}
+        onChange={setTarget}
+        onSubmit={assess}
+        loading={loading}
+        placeholder="example.com"
+        accent="green"
+        label="Assess"
+      />
+
+      <ErrorNote>{error}</ErrorNote>
+
+      {!result && !error && (
+        <InfoNote title="What this checks">
+          Performs a real TLS handshake to port 443 and reports the negotiated
+          protocol, cipher, and certificate details, plus the security headers
+          returned by a live HTTPS request. This is a snapshot of one handshake —
+          servers can offer different parameters to different clients.
+        </InfoNote>
+      )}
+
+      {result && !result.tls.reachable && (
+        <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
+          <div className="flex items-center gap-2 mb-2">
+            <Badge level="critical">Unreachable</Badge>
+            <span className="text-sm font-semibold text-red-800">{result.domain}:443</span>
+          </div>
+          <p className="text-sm text-red-700">
+            A TLS connection could not be established
+            {result.tls.error ? `: ${result.tls.error}` : '.'} The host may not
+            serve HTTPS, may be firewalled, or may be down.
+          </p>
+        </div>
+      )}
+
+      {result?.assessment && (
+        <div className="space-y-5">
+          <div className="grid grid-cols-3 gap-3">
+            <StatCard
+              label="Grade"
+              value={result.assessment.grade}
+              level={result.assessment.level}
+            />
+            <StatCard
+              label="Protocol"
+              value={result.tls.protocol || 'unknown'}
+              level={protocolLevel(result.tls.protocol)}
+            />
+            <StatCard
+              label="Days to expiry"
+              value={
+                cert?.expired
+                  ? 'expired'
+                  : typeof cert?.daysRemaining === 'number'
+                    ? cert.daysRemaining
+                    : '—'
+              }
+              level={
+                cert?.expired
+                  ? 'critical'
+                  : typeof cert?.daysRemaining === 'number' && cert.daysRemaining < 30
+                    ? 'medium'
+                    : 'low'
+              }
+            />
           </div>
 
-          {/* Info Box */}
-          <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-            <div className="flex items-start gap-3">
-              <Info className="w-5 h-5 text-blue-600 mt-1" />
-              <div className="text-sm text-blue-800">
-                <p className="font-semibold mb-1">SSL/TLS Configuration Analysis</p>
-                <p>
-                  This tool assesses the SSL/TLS configuration including certificate validity, 
-                  supported protocols, cipher suites, and security vulnerabilities.
-                </p>
-              </div>
-            </div>
-          </div>
-
-          {/* Form */}
-          <form onSubmit={assessSSLConfig} className="mb-6">
-            <div className="flex gap-3">
-              <input
-                type="text"
-                value={domain}
-                onChange={(e) => setDomain(e.target.value)}
-                placeholder="Enter domain name (e.g., example.com)"
-                className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                disabled={loading}
+          <div>
+            <h3 className="text-sm font-semibold text-gray-900 mb-2">Connection</h3>
+            <div className="border border-gray-200 rounded-lg px-4 py-1">
+              <Row
+                label="Protocol"
+                value={result.tls.protocol || 'unknown'}
+                badge={
+                  <Badge level={protocolLevel(result.tls.protocol)}>
+                    {MODERN_PROTOCOLS.includes(result.tls.protocol) ? 'modern' : 'weak/outdated'}
+                  </Badge>
+                }
               />
-              <button
-                type="submit"
-                disabled={loading || !domain.trim()}
-                className="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
-              >
-                {loading ? (
-                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                ) : (
-                  <Lock className="w-4 h-4" />
-                )}
-                {loading ? 'Analyzing...' : 'Assess SSL'}
-              </button>
+              <Row
+                label="Cipher"
+                value={
+                  result.tls.cipher
+                    ? `${result.tls.cipher.name} (${result.tls.cipher.bits}-bit)`
+                    : '—'
+                }
+              />
+              <Row label="ALPN" value={result.tls.alpn || 'none negotiated'} />
+              <Row
+                label="HTTP/2"
+                value={result.tls.http2 ? 'yes' : 'no'}
+                badge={<Badge level={result.tls.http2 ? 'low' : 'unknown'}>{result.tls.http2 ? 'h2' : 'http/1.1'}</Badge>}
+              />
+              <Row
+                label="Chain trusted"
+                value={result.tls.authorized ? 'yes' : `no${result.tls.authError ? ` — ${result.tls.authError}` : ''}`}
+                badge={
+                  <Badge level={result.tls.authorized ? 'low' : 'critical'}>
+                    {result.tls.authorized ? 'valid' : 'invalid'}
+                  </Badge>
+                }
+              />
             </div>
-          </form>
+          </div>
 
-          {/* Error */}
-          {error && (
-            <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg flex items-center gap-3">
-              <AlertTriangle className="w-5 h-5 text-red-500" />
-              <p className="text-red-700">{error}</p>
-            </div>
-          )}
-
-          {/* Results */}
-          {result && (
-            <div className="space-y-6">
-              {/* Overall Grade */}
-              <div className={`rounded-lg p-6 border-2 ${getGradeColor(result.grade)}`}>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h3 className="text-2xl font-bold">{result.domain}</h3>
-                    <p className="text-sm opacity-75">SSL/TLS Configuration Assessment</p>
-                  </div>
-                  <div className="text-center">
-                    <div className="text-5xl font-bold">{result.grade}</div>
-                    <p className="text-sm font-semibold mt-1">Score: {result.score}/100</p>
-                  </div>
-                </div>
+          {cert && (
+            <div>
+              <h3 className="text-sm font-semibold text-gray-900 mb-2">Certificate</h3>
+              <div className="border border-gray-200 rounded-lg px-4 py-1">
+                <Row label="Subject" value={cert.subject} />
+                <Row label="Issuer" value={cert.issuer} />
+                <Row label="Valid from" value={cert.validFrom} />
+                <Row label="Valid to" value={cert.validTo} />
+                <Row
+                  label="Key size"
+                  value={cert.keyBits ? `${cert.keyBits} bits` : '—'}
+                />
               </div>
-
-              {/* Certificate Information */}
-              <div className="bg-gray-50 rounded-lg p-6">
-                <h3 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
-                  <Shield className="w-5 h-5 text-gray-600" />
-                  Certificate Details
-                </h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <p className="text-sm text-gray-600">Issuer</p>
-                    <p className="font-medium">{result.certificate.issuer}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-600">Type</p>
-                    <p className="font-medium">{result.certificate.type} Certificate</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-600">Valid Until</p>
-                    <p className="font-medium">
-                      {new Date(result.certificate.validTo).toLocaleDateString()}
-                      <span className={`ml-2 text-sm ${result.certificate.daysRemaining < 30 ? 'text-red-600' : 'text-green-600'}`}>
-                        ({result.certificate.daysRemaining} days)
-                      </span>
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-600">Key Size</p>
-                    <p className="font-medium">{result.certificate.keySize} bits</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-600">Signature Algorithm</p>
-                    <p className="font-medium">{result.certificate.signatureAlgorithm}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-600">Certificate Transparency</p>
-                    <p className="font-medium flex items-center gap-1">
-                      {result.certificate.transparency ? (
-                        <><CheckCircle className="w-4 h-4 text-green-600" /> Yes</>
-                      ) : (
-                        <><XCircle className="w-4 h-4 text-red-600" /> No</>
-                      )}
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Protocol Support */}
-              <div className="bg-white rounded-lg p-6 border border-gray-200">
-                <h3 className="font-semibold text-gray-900 mb-4">Protocol Support</h3>
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                  {Object.entries(result.protocols).map(([protocol, data]) => (
-                    <div key={protocol} className={`rounded-lg p-3 border ${
-                      data.supported 
-                        ? (data.secure ? 'bg-yellow-50 border-yellow-200' : 'bg-red-50 border-red-200')
-                        : 'bg-green-50 border-green-200'
-                    }`}>
-                      <div className="flex items-center justify-between">
-                        <span className="font-medium uppercase">{protocol.replace(/(\d+)/, ' $1.')}</span>
-                        {data.supported ? (
-                          data.secure ? (
-                            <AlertTriangle className="w-4 h-4 text-yellow-600" />
-                          ) : (
-                            <XCircle className="w-4 h-4 text-red-600" />
-                          )
-                        ) : (
-                          <CheckCircle className="w-4 h-4 text-green-600" />
-                        )}
-                      </div>
-                      <p className="text-xs mt-1">
-                        {data.supported ? 'Enabled' : 'Disabled'}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Security Features */}
-              <div className="bg-white rounded-lg p-6 border border-gray-200">
-                <h3 className="font-semibold text-gray-900 mb-4">Security Features</h3>
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between py-2 border-b">
-                    <span>HTTP Strict Transport Security (HSTS)</span>
-                    <span className="flex items-center gap-2">
-                      {result.features.hsts.enabled ? (
-                        <>
-                          <CheckCircle className="w-4 h-4 text-green-600" />
-                          <span className="text-sm text-gray-600">
-                            Max Age: {result.features.hsts.maxAge}s
-                          </span>
-                        </>
-                      ) : (
-                        <XCircle className="w-4 h-4 text-red-600" />
-                      )}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between py-2 border-b">
-                    <span>OCSP Stapling</span>
-                    {result.features.ocspStapling.enabled ? (
-                      <CheckCircle className="w-4 h-4 text-green-600" />
-                    ) : (
-                      <XCircle className="w-4 h-4 text-red-600" />
-                    )}
-                  </div>
-                  <div className="flex items-center justify-between py-2 border-b">
-                    <span>Forward Secrecy</span>
-                    <span className="flex items-center gap-2">
-                      {result.features.forwardSecrecy.supported ? (
-                        <>
-                          <CheckCircle className="w-4 h-4 text-green-600" />
-                          <span className="text-sm text-gray-600">
-                            {result.features.forwardSecrecy.percentage}%
-                          </span>
-                        </>
-                      ) : (
-                        <XCircle className="w-4 h-4 text-red-600" />
-                      )}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between py-2 border-b">
-                    <span>HTTP/2 Support</span>
-                    {result.features.http2Supported ? (
-                      <CheckCircle className="w-4 h-4 text-green-600" />
-                    ) : (
-                      <XCircle className="w-4 h-4 text-yellow-600" />
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              {/* Vulnerability Assessment */}
-              <div className="bg-white rounded-lg p-6 border border-gray-200">
-                <h3 className="font-semibold text-gray-900 mb-4">Vulnerability Assessment</h3>
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                  {Object.entries(result.vulnerabilities).map(([vuln, data]) => (
-                    <div key={vuln} className={`rounded-lg p-3 border ${
-                      data.vulnerable ? 'bg-red-50 border-red-200' : 'bg-green-50 border-green-200'
-                    }`}>
-                      <div className="flex items-center justify-between">
-                        <span className="font-medium uppercase">{vuln}</span>
-                        {data.vulnerable ? (
-                          <XCircle className="w-4 h-4 text-red-600" />
-                        ) : (
-                          <CheckCircle className="w-4 h-4 text-green-600" />
-                        )}
-                      </div>
-                      <p className="text-xs mt-1">
-                        {data.vulnerable ? 'Vulnerable' : 'Protected'}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Recommendations */}
-              {result.recommendations.length > 0 && (
-                <div className="bg-yellow-50 rounded-lg p-6 border border-yellow-200">
-                  <h3 className="font-semibold text-yellow-900 mb-4 flex items-center gap-2">
-                    <AlertTriangle className="w-5 h-5" />
-                    Security Recommendations
-                  </h3>
-                  <div className="space-y-2">
-                    {result.recommendations.map((rec, index) => (
-                      <div key={index} className={`rounded p-3 ${getSeverityColor(rec.severity)}`}>
-                        <div className="flex items-start gap-2">
-                          <span className="text-xs font-semibold uppercase">
-                            {rec.severity}
-                          </span>
-                          <p className="text-sm">{rec.message}</p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+              {cert.fingerprint256 && (
+                <div className="mt-3">
+                  <p className="text-xs text-gray-600 mb-1">SHA-256 fingerprint</p>
+                  <Mono>{cert.fingerprint256}</Mono>
                 </div>
               )}
             </div>
           )}
+
+          <div>
+            <h3 className="text-sm font-semibold text-gray-900 mb-2">
+              Security headers (live HTTPS response)
+            </h3>
+            {headers ? (
+              <div className="border border-gray-200 rounded-lg px-4 py-1">
+                {HEADER_CHECKS.map(({ key, label }) => {
+                  const v = headers[key];
+                  const present = typeof v === 'boolean' ? v : Boolean(v);
+                  return (
+                    <Row
+                      key={key}
+                      label={label}
+                      value={typeof v === 'string' && v ? v : present ? 'present' : 'absent'}
+                      badge={
+                        <Badge level={present ? 'low' : 'medium'}>
+                          {present ? 'present' : 'absent'}
+                        </Badge>
+                      }
+                    />
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="text-sm text-gray-600 bg-gray-50 border border-gray-200 rounded-lg p-3">
+                Security headers could not be fetched
+                {result.httpError ? `: ${result.httpError}` : '.'}
+              </p>
+            )}
+          </div>
+
+          <div>
+            <h3 className="text-sm font-semibold text-gray-900 mb-2">
+              Findings ({result.assessment.issues.length})
+            </h3>
+            {result.assessment.issues.length > 0 ? (
+              <IssueList issues={result.assessment.issues} />
+            ) : (
+              <p className="text-sm text-green-700 bg-green-50 border border-green-200 rounded-lg p-3">
+                No problems found in this handshake: modern protocol, valid and
+                trusted certificate.
+              </p>
+            )}
+          </div>
+
+          <InfoNote title="How the grade is computed">
+            Starts at 100; deductions from this handshake only: legacy protocol
+            −40 (TLS 1.2 −5), expired certificate −50 (expiring &lt;30 days −15),
+            untrusted chain −40. Score {result.assessment.score}/100 → grade{' '}
+            {result.assessment.grade}. This reflects a single live handshake, not
+            a full scan of every protocol and cipher the server accepts.
+          </InfoNote>
         </div>
-      </div>
-    </div>
+      )}
+    </ToolShell>
   );
 }

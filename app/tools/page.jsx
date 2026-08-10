@@ -12,7 +12,10 @@ import {
   Database,
   Eye,
   Target,
-  CheckCircle
+  CheckCircle,
+  Server,
+  Key,
+  Network
 } from "lucide-react";
 import Header from "../../components/Header";
 import Breadcrumb from "../../components/Breadcrumb";
@@ -30,6 +33,10 @@ import FastFluxDetection from "../../components/tools/FastFluxDetection";
 import DomainParkingAnalysis from "../../components/tools/DomainParkingAnalysis";
 import MalwareC2Detection from "../../components/tools/MalwareC2Detection";
 import CertificateTransparencyMonitoring from "../../components/tools/CertificateTransparencyMonitoring";
+import DnsLookup from "../../components/tools/DnsLookup";
+import MxLookup from "../../components/tools/MxLookup";
+import ReverseDnsLookup from "../../components/tools/ReverseDnsLookup";
+import DkimLookup from "../../components/tools/DkimLookup";
 
 export default function ToolsPage() {
   const [activeTool, setActiveTool] = useState(null);
@@ -163,6 +170,42 @@ export default function ToolsPage() {
       status: 'available',
       category: 'Email Security',
       color: 'purple'
+    },
+    {
+      id: 'dkim-lookup',
+      title: 'DKIM Record Lookup',
+      description: 'Look up and inspect DKIM public-key records for a selector',
+      icon: Key,
+      status: 'available',
+      category: 'Email Security',
+      color: 'purple'
+    },
+    {
+      id: 'dns-lookup',
+      title: 'DNS Records Lookup',
+      description: 'View all DNS records (A, AAAA, MX, NS, TXT, CNAME, SOA) for a domain',
+      icon: Server,
+      status: 'available',
+      category: 'DNS & Email Diagnostics',
+      color: 'blue'
+    },
+    {
+      id: 'mx-lookup',
+      title: 'MX Lookup',
+      description: 'Inspect mail exchangers, their priorities, resolution, and email readiness',
+      icon: Mail,
+      status: 'available',
+      category: 'DNS & Email Diagnostics',
+      color: 'green'
+    },
+    {
+      id: 'reverse-dns',
+      title: 'Reverse DNS (PTR)',
+      description: 'Resolve an IPv4 address to its PTR hostname(s)',
+      icon: Network,
+      status: 'available',
+      category: 'DNS & Email Diagnostics',
+      color: 'indigo'
     }
   ];
 
@@ -199,9 +242,10 @@ export default function ToolsPage() {
             </div>
           </div>
           <p className="text-gray-700 max-w-3xl">
-            Comprehensive security analysis tools for domains, IPs, and network infrastructure. 
-            These Phase 1 tools provide essential cybersecurity intelligence for threat hunting, 
-            incident response, and security research.
+            Comprehensive security and DNS analysis tools for domains, IPs, and network
+            infrastructure. Every tool runs live against real data sources — RDAP, authoritative
+            DNS, live TLS handshakes, DNS blocklists, and Certificate Transparency logs — for
+            threat hunting, incident response, and email deliverability checks.
           </p>
         </div>
 
@@ -273,18 +317,19 @@ export default function ToolsPage() {
               <Database className="w-5 h-5 text-blue-600" />
             </div>
             <div>
-              <h3 className="font-semibold text-gray-900 mb-2">Development Roadmap</h3>
+              <h3 className="font-semibold text-gray-900 mb-2">How these tools work</h3>
               <p className="text-gray-700 mb-3">
-                These Phase 1 security tools are currently in development. They will be rolled out gradually 
-                based on community feedback and demand. Each tool will integrate seamlessly with the existing 
-                RDAP lookup functionality.
+                Each tool queries live, open data sources server-side — no fabricated results. Where a
+                capability genuinely needs a commercial feed or API key (e.g. Google Safe Browsing,
+                PhishTank, ThreatFox), the tool says so instead of guessing. Results reflect the state
+                at query time.
               </p>
               <div className="flex flex-wrap gap-2">
                 <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-blue-100 text-blue-800">
-                  14 Tools Planned
+                  Live Data
                 </span>
                 <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-green-100 text-green-800">
-                  High Priority
+                  No API Key Required
                 </span>
                 <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-purple-100 text-purple-800">
                   Open Source
@@ -354,6 +399,18 @@ export default function ToolsPage() {
       )}
       {activeTool === 'cert-transparency' && (
         <CertificateTransparencyMonitoring onClose={() => setActiveTool(null)} />
+      )}
+      {activeTool === 'dkim-lookup' && (
+        <DkimLookup onClose={() => setActiveTool(null)} />
+      )}
+      {activeTool === 'dns-lookup' && (
+        <DnsLookup onClose={() => setActiveTool(null)} />
+      )}
+      {activeTool === 'mx-lookup' && (
+        <MxLookup onClose={() => setActiveTool(null)} />
+      )}
+      {activeTool === 'reverse-dns' && (
+        <ReverseDnsLookup onClose={() => setActiveTool(null)} />
       )}
     </div>
   );

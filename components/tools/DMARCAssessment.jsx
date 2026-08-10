@@ -1,642 +1,223 @@
 'use client';
 
 import { useState } from 'react';
-import { Mail, Shield, AlertTriangle, CheckCircle, XCircle, Info, BarChart } from 'lucide-react';
+import { Mail } from 'lucide-react';
+import {
+  ToolShell,
+  QueryForm,
+  ErrorNote,
+  InfoNote,
+  Badge,
+  StatCard,
+  CopyButton,
+  Mono,
+  IssueList,
+} from './_shared';
+import {
+  callTool,
+  validateDomain,
+  findDmarcRecord,
+  parseDmarc,
+} from '../../utils/security-tools';
+
+const SEVERITY_PENALTY = { critical: 40, high: 25, medium: 12, low: 4 };
+// A record can never grade above its policy strength.
+const POLICY_CAP = { reject: 100, quarantine: 89, none: 74 };
+
+function computeGrade(parsed) {
+  let score = 100;
+  for (const issue of parsed.issues) {
+    score -= SEVERITY_PENALTY[issue.severity] || 0;
+  }
+  const cap = POLICY_CAP[parsed.policy] ?? 39; // missing/unknown policy caps at F territory
+  score = Math.max(0, Math.min(score, cap));
+  let grade;
+  if (score >= 90) grade = 'A';
+  else if (score >= 75) grade = 'B';
+  else if (score >= 60) grade = 'C';
+  else if (score >= 40) grade = 'D';
+  else grade = 'F';
+  const level =
+    score >= 90 ? 'low' : score >= 60 ? 'medium' : score >= 40 ? 'high' : 'critical';
+  return { grade, score, level };
+}
+
+function policyBadgeLevel(policy) {
+  if (policy === 'reject') return 'low';
+  if (policy === 'quarantine') return 'medium';
+  if (policy === 'none') return 'high';
+  return 'critical';
+}
+
+function TagRow({ label, value }) {
+  return (
+    <div className="flex items-start justify-between gap-4 py-2 border-b border-gray-100 last:border-b-0">
+      <span className="text-sm text-gray-600 shrink-0">{label}</span>
+      <span className="text-sm font-mono text-gray-900 text-right break-all">
+        {value ?? '—'}
+      </span>
+    </div>
+  );
+}
 
 export default function DMARCAssessment({ onClose }) {
-  const [domain, setDomain] = useState('');
+  const [target, setTarget] = useState('');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState('');
 
-  const analyzeDMARC = async (e) => {
-    e.preventDefault();
-    if (!domain.trim()) return;
-
-    setLoading(true);
+  const analyze = async () => {
     setError('');
     setResult(null);
-
+    let domain;
     try {
-      const cleanDomain = domain.trim().toLowerCase();
-      
-      // Fetch DMARC record analysis (simulated for demonstration)
-      const dmarcAnalysis = await performDMARCAnalysis(cleanDomain);
-      
-      setResult(dmarcAnalysis);
+      domain = validateDomain(target);
     } catch (err) {
-      setError(err.message || 'Failed to analyze DMARC policy');
+      setError(err.message);
+      return;
+    }
+    setLoading(true);
+    try {
+      // DMARC lives at the _dmarc subdomain, not the bare domain.
+      const dns = await callTool('dns', { target: `_dmarc.${domain}` });
+      const txt = dns?.records?.TXT || [];
+      const rawDmarc = findDmarcRecord(txt);
+      if (!rawDmarc) {
+        setResult({ domain, found: false });
+      } else {
+        const parsed = parseDmarc(rawDmarc);
+        setResult({ domain, found: true, parsed, grade: computeGrade(parsed) });
+      }
+    } catch (err) {
+      // A missing _dmarc record commonly surfaces as an NXDOMAIN-style DNS error.
+      if (/enotfound|nxdomain|not\s*found|no\s+records/i.test(err.message)) {
+        setResult({ domain, found: false });
+      } else {
+        setError(err.message);
+      }
     } finally {
       setLoading(false);
     }
   };
 
-  // Real DMARC analysis function
-  const performDMARCAnalysis = async (domain) => {
-    // Validate domain format - allow anything.extension format
-    if (!/^[a-zA-Z0-9][a-zA-Z0-9.-]*[a-zA-Z0-9]\.[a-zA-Z]{2,}$/.test(domain)) {
-      throw new Error('Please enter a valid domain name (e.g., example.com)');
-    }
-
-    try {
-      // For now, simulate DMARC analysis with realistic data
-      // In production, this would use a backend API to perform DNS lookups
-    
-    const analysis = {
-      domain,
-      timestamp: new Date().toISOString(),
-      
-      dmarcRecord: {
-        found: true,
-        raw: 'v=DMARC1; p=quarantine; rua=mailto:dmarc@example.com; ruf=mailto:forensic@example.com; pct=100; sp=reject; adkim=s; aspf=s',
-        version: 'DMARC1',
-        policy: 'quarantine',
-        subdomain_policy: 'reject',
-        percentage: 100,
-        aggregate_reports: 'dmarc@example.com',
-        forensic_reports: 'forensic@example.com',
-        alignment: {
-          dkim: 'strict',
-          spf: 'strict'
-        },
-        options: {},
-        tags: {}
-      },
-      
-      validation: {
-        syntaxValid: true,
-        warnings: [],
-        errors: []
-      },
-      
-      assessment: {
-        protection_level: '',
-        deployment_stage: '',
-        recommendations: [],
-        issues: []
-      },
-      
-      score: 0,
-      grade: ''
-    };
-
-    // Parse DMARC record
-    const dmarcParts = analysis.dmarcRecord.raw.split(';').map(part => part.trim());
-    
-    for (const part of dmarcParts) {
-      const [key, value] = part.split('=').map(item => item.trim());
-      
-      switch (key) {
-        case 'v':
-          analysis.dmarcRecord.version = value;
-          break;
-        case 'p':
-          analysis.dmarcRecord.policy = value;
-          break;
-        case 'sp':
-          analysis.dmarcRecord.subdomain_policy = value;
-          break;
-        case 'pct':
-          analysis.dmarcRecord.percentage = parseInt(value);
-          break;
-        case 'rua':
-          analysis.dmarcRecord.aggregate_reports = value.replace('mailto:', '');
-          break;
-        case 'ruf':
-          analysis.dmarcRecord.forensic_reports = value.replace('mailto:', '');
-          break;
-        case 'adkim':
-          analysis.dmarcRecord.alignment.dkim = value === 's' ? 'strict' : 'relaxed';
-          break;
-        case 'aspf':
-          analysis.dmarcRecord.alignment.spf = value === 's' ? 'strict' : 'relaxed';
-          break;
-        case 'fo':
-          analysis.dmarcRecord.options.failure_options = value;
-          break;
-        case 'rf':
-          analysis.dmarcRecord.options.report_format = value;
-          break;
-        case 'ri':
-          analysis.dmarcRecord.options.report_interval = parseInt(value);
-          break;
-        default:
-          analysis.dmarcRecord.tags[key] = value;
-      }
-    }
-
-    // Analyze DMARC configuration
-    const issues = [];
-    const recommendations = [];
-    let score = 100;
-
-    // Check DMARC record presence
-    if (!analysis.dmarcRecord.found) {
-      issues.push({
-        severity: 'critical',
-        message: 'No DMARC record found',
-        impact: 'No protection against email spoofing',
-        solution: 'Implement DMARC policy starting with p=none'
-      });
-      score = 0;
-      analysis.assessment.protection_level = 'None';
-      analysis.assessment.deployment_stage = 'Not deployed';
-    } else {
-      // Analyze policy strength
-      switch (analysis.dmarcRecord.policy) {
-        case 'none':
-          analysis.assessment.protection_level = 'Monitor Only';
-          analysis.assessment.deployment_stage = 'Initial deployment';
-          recommendations.push({
-            priority: 'medium',
-            action: 'Upgrade to quarantine policy',
-            details: 'Move from monitoring to enforcement after ensuring legitimate emails pass'
-          });
-          score -= 30;
-          break;
-        case 'quarantine':
-          analysis.assessment.protection_level = 'Moderate';
-          analysis.assessment.deployment_stage = 'Enforcement';
-          recommendations.push({
-            priority: 'low',
-            action: 'Consider upgrading to reject policy',
-            details: 'Provides strongest protection once you\'re confident in your setup'
-          });
-          score -= 10;
-          break;
-        case 'reject':
-          analysis.assessment.protection_level = 'Strong';
-          analysis.assessment.deployment_stage = 'Full enforcement';
-          break;
-        default:
-          issues.push({
-            severity: 'high',
-            message: 'Invalid DMARC policy',
-            impact: 'DMARC record may be ignored',
-            solution: 'Use valid policy: none, quarantine, or reject'
-          });
-          score -= 40;
-      }
-
-      // Check percentage
-      if (analysis.dmarcRecord.percentage < 100) {
-        issues.push({
-          severity: 'medium',
-          message: `DMARC policy applied to ${analysis.dmarcRecord.percentage}% of emails`,
-          impact: 'Partial protection - some spoofed emails may pass',
-          solution: 'Increase percentage to 100 once confident in configuration'
-        });
-        score -= 15;
-      }
-
-      // Check alignment modes
-      if (analysis.dmarcRecord.alignment.dkim === 'relaxed') {
-        recommendations.push({
-          priority: 'low',
-          action: 'Consider strict DKIM alignment',
-          details: 'Provides stronger protection but requires exact domain match'
-        });
-        score -= 5;
-      }
-
-      if (analysis.dmarcRecord.alignment.spf === 'relaxed') {
-        recommendations.push({
-          priority: 'low',
-          action: 'Consider strict SPF alignment',
-          details: 'Provides stronger protection but requires exact domain match'
-        });
-        score -= 5;
-      }
-
-      // Check reporting
-      if (!analysis.dmarcRecord.aggregate_reports) {
-        issues.push({
-          severity: 'medium',
-          message: 'No aggregate reporting configured',
-          impact: 'Missing visibility into DMARC failures',
-          solution: 'Add rua tag to receive aggregate reports'
-        });
-        score -= 20;
-        recommendations.push({
-          priority: 'high',
-          action: 'Enable aggregate reporting',
-          details: 'Essential for monitoring and improving email authentication'
-        });
-      }
-
-      if (!analysis.dmarcRecord.forensic_reports) {
-        recommendations.push({
-          priority: 'low',
-          action: 'Consider forensic reporting',
-          details: 'Provides detailed failure information for investigation'
-        });
-        score -= 5;
-      }
-
-      // Check subdomain policy
-      if (!analysis.dmarcRecord.subdomain_policy) {
-        recommendations.push({
-          priority: 'medium',
-          action: 'Set explicit subdomain policy',
-          details: 'Clarifies protection for subdomain emails'
-        });
-        score -= 10;
-      } else if (analysis.dmarcRecord.subdomain_policy !== analysis.dmarcRecord.policy) {
-        if (analysis.dmarcRecord.subdomain_policy === 'reject' && analysis.dmarcRecord.policy !== 'reject') {
-          // Stricter subdomain policy is good
-        } else {
-          issues.push({
-            severity: 'low',
-            message: 'Subdomain policy weaker than main domain',
-            impact: 'Potential subdomain spoofing vulnerability',
-            solution: 'Consider making subdomain policy at least as strict as main domain'
-          });
-          score -= 5;
-        }
-      }
-
-      // Check for common syntax issues
-      if (!analysis.dmarcRecord.version || analysis.dmarcRecord.version !== 'DMARC1') {
-        issues.push({
-          severity: 'critical',
-          message: 'Invalid DMARC version',
-          impact: 'DMARC record will be ignored',
-          solution: 'Ensure record starts with v=DMARC1'
-        });
-        score -= 50;
-      }
-
-      // Check for multiple DMARC records (simulated)
-      const multipleRecords = false; // In production, check for multiple records
-      if (multipleRecords) {
-        issues.push({
-          severity: 'critical',
-          message: 'Multiple DMARC records detected',
-          impact: 'DMARC will fail - only one record allowed',
-          solution: 'Remove duplicate DMARC records'
-        });
-        score -= 40;
-      }
-
-      // Advanced recommendations
-      if (analysis.dmarcRecord.policy === 'reject' && analysis.dmarcRecord.percentage === 100) {
-        recommendations.push({
-          priority: 'info',
-          action: 'DMARC implementation complete',
-          details: 'Excellent protection level achieved'
-        });
-      }
-
-      if (!analysis.dmarcRecord.options.failure_options) {
-        recommendations.push({
-          priority: 'info',
-          action: 'Consider setting failure reporting options',
-          details: 'Use fo=1 for detailed failure reports'
-        });
-      }
-    }
-
-    analysis.assessment.issues = issues;
-    analysis.assessment.recommendations = recommendations;
-    analysis.score = Math.max(0, score);
-    
-    // Assign grade based on score and policy
-    if (analysis.score >= 90 && analysis.dmarcRecord.policy === 'reject') {
-      analysis.grade = 'A+';
-    } else if (analysis.score >= 85) {
-      analysis.grade = 'A';
-    } else if (analysis.score >= 75) {
-      analysis.grade = 'B';
-    } else if (analysis.score >= 65) {
-      analysis.grade = 'C';
-    } else if (analysis.score >= 50) {
-      analysis.grade = 'D';
-    } else {
-      analysis.grade = 'F';
-    }
-
-    return analysis;
-    } catch (error) {
-      throw new Error(`DMARC analysis failed: ${error.message}`);
-    }
-  };
-
-  const getSeverityColor = (severity) => {
-    const colors = {
-      critical: 'text-red-700 bg-red-50 border-red-200',
-      high: 'text-orange-700 bg-orange-50 border-orange-200',
-      medium: 'text-yellow-700 bg-yellow-50 border-yellow-200',
-      low: 'text-blue-700 bg-blue-50 border-blue-200',
-      info: 'text-gray-700 bg-gray-50 border-gray-200'
-    };
-    return colors[severity] || colors.info;
-  };
-
-  const getGradeColor = (grade) => {
-    if (grade.startsWith('A')) return 'text-green-600 bg-green-50 border-green-300';
-    if (grade.startsWith('B')) return 'text-blue-600 bg-blue-50 border-blue-300';
-    if (grade.startsWith('C')) return 'text-yellow-600 bg-yellow-50 border-yellow-300';
-    if (grade.startsWith('D')) return 'text-orange-600 bg-orange-50 border-orange-300';
-    return 'text-red-600 bg-red-50 border-red-300';
-  };
-
-  const getPolicyColor = (policy) => {
-    switch (policy) {
-      case 'reject': return 'text-green-700 bg-green-100';
-      case 'quarantine': return 'text-yellow-700 bg-yellow-100';
-      case 'none': return 'text-blue-700 bg-blue-100';
-      default: return 'text-gray-700 bg-gray-100';
-    }
-  };
-
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-      <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
-        <div className="p-6">
-          {/* Header */}
-          <div className="flex items-center justify-between mb-6">
-            <div className="flex items-center gap-3">
-              <div className="bg-purple-100 p-2 rounded-lg">
-                <Mail className="w-6 h-6 text-purple-600" />
-              </div>
-              <div>
-                <h2 className="text-xl font-bold text-gray-900">DMARC Policy Assessment</h2>
-                <p className="text-gray-600">Analyze DMARC implementation and security</p>
-              </div>
+    <ToolShell
+      title="DMARC Assessment"
+      subtitle="Live DMARC policy lookup (queries _dmarc.<domain>)"
+      icon={Mail}
+      accent="purple"
+      onClose={onClose}
+    >
+      <QueryForm
+        value={target}
+        onChange={setTarget}
+        onSubmit={analyze}
+        loading={loading}
+        placeholder="example.com"
+        accent="purple"
+        label="Assess"
+      />
+
+      <ErrorNote>{error}</ErrorNote>
+
+      {!result && !error && (
+        <InfoNote title="What this checks">
+          Fetches the live TXT record at <code>_dmarc.&lt;domain&gt;</code> and
+          parses the DMARC policy (RFC 7489): enforcement level, subdomain policy,
+          coverage percentage, reporting addresses, and alignment modes.
+        </InfoNote>
+      )}
+
+      {result && !result.found && (
+        <div className="space-y-4">
+          <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
+            <div className="flex items-center gap-2 mb-2">
+              <Badge level="critical">No DMARC record</Badge>
+              <span className="text-sm font-semibold text-red-800">
+                _dmarc.{result.domain}
+              </span>
             </div>
-            <button
-              onClick={onClose}
-              className="text-gray-400 hover:text-gray-600 text-xl font-bold"
-            >
-              ×
-            </button>
+            <p className="text-sm text-red-700">
+              No TXT record starting with <code>v=DMARC1</code> was found at{' '}
+              <code>_dmarc.{result.domain}</code>. Without DMARC, receivers have no
+              instruction on what to do with mail that fails SPF/DKIM, and the
+              domain owner gets no visibility into spoofing attempts.
+            </p>
           </div>
-
-          {/* Info Box */}
-          <div className="mb-6 p-4 bg-purple-50 border border-purple-200 rounded-lg">
-            <div className="flex items-start gap-3">
-              <Info className="w-5 h-5 text-purple-600 mt-1" />
-              <div className="text-sm text-purple-800">
-                <p className="font-semibold mb-1">DMARC (Domain-based Message Authentication, Reporting, and Conformance)</p>
-                <p>
-                  DMARC builds on SPF and DKIM to provide policy enforcement and reporting 
-                  for email authentication failures.
-                </p>
-              </div>
-            </div>
-          </div>
-
-          {/* Form */}
-          <form onSubmit={analyzeDMARC} className="mb-6">
-            <div className="flex gap-3">
-              <input
-                type="text"
-                value={domain}
-                onChange={(e) => setDomain(e.target.value)}
-                placeholder="Enter domain name (e.g., example.com)"
-                className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                disabled={loading}
-              />
-              <button
-                type="submit"
-                disabled={loading || !domain.trim()}
-                className="px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
-              >
-                {loading ? (
-                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                ) : (
-                  <Mail className="w-4 h-4" />
-                )}
-                {loading ? 'Analyzing...' : 'Analyze DMARC'}
-              </button>
-            </div>
-          </form>
-
-          {/* Error */}
-          {error && (
-            <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg flex items-center gap-3">
-              <AlertTriangle className="w-5 h-5 text-red-500" />
-              <p className="text-red-700">{error}</p>
-            </div>
-          )}
-
-          {/* Results */}
-          {result && (
-            <div className="space-y-6">
-              {/* Overall Grade */}
-              <div className={`rounded-lg p-6 border-2 ${getGradeColor(result.grade)}`}>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h3 className="text-2xl font-bold">{result.domain}</h3>
-                    <p className="text-sm opacity-75">DMARC Policy Analysis</p>
-                  </div>
-                  <div className="text-center">
-                    <div className="text-5xl font-bold">{result.grade}</div>
-                    <p className="text-sm font-semibold mt-1">Score: {result.score}/100</p>
-                  </div>
-                </div>
-              </div>
-
-              {/* DMARC Record */}
-              {result.dmarcRecord.found && (
-                <div className="bg-gray-50 rounded-lg p-6">
-                  <h3 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
-                    <Shield className="w-5 h-5 text-gray-600" />
-                    DMARC Record
-                  </h3>
-                  <div className="bg-gray-900 text-green-400 p-4 rounded-lg font-mono text-sm overflow-x-auto">
-                    {result.dmarcRecord.raw}
-                  </div>
-                  
-                  <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <p className="text-sm text-gray-600">Policy</p>
-                      <span className={`inline-block px-3 py-1 rounded-full text-sm font-medium ${getPolicyColor(result.dmarcRecord.policy)}`}>
-                        {result.dmarcRecord.policy.toUpperCase()}
-                      </span>
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-600">Subdomain Policy</p>
-                      <span className={`inline-block px-3 py-1 rounded-full text-sm font-medium ${getPolicyColor(result.dmarcRecord.subdomain_policy || 'none')}`}>
-                        {(result.dmarcRecord.subdomain_policy || 'inherit').toUpperCase()}
-                      </span>
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-600">Percentage</p>
-                      <p className="font-medium">{result.dmarcRecord.percentage}%</p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-600">Protection Level</p>
-                      <p className="font-medium">{result.assessment.protection_level}</p>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Policy Details */}
-              {result.dmarcRecord.found && (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  {/* Alignment */}
-                  <div className="bg-white rounded-lg p-6 border border-gray-200">
-                    <h3 className="font-semibold text-gray-900 mb-4">Alignment Settings</h3>
-                    <div className="space-y-3">
-                      <div className="flex justify-between items-center">
-                        <span>DKIM Alignment</span>
-                        <span className={`px-2 py-1 rounded text-sm font-medium ${
-                          result.dmarcRecord.alignment.dkim === 'strict' 
-                            ? 'bg-green-100 text-green-800' 
-                            : 'bg-yellow-100 text-yellow-800'
-                        }`}>
-                          {result.dmarcRecord.alignment.dkim.toUpperCase()}
-                        </span>
-                      </div>
-                      <div className="flex justify-between items-center">
-                        <span>SPF Alignment</span>
-                        <span className={`px-2 py-1 rounded text-sm font-medium ${
-                          result.dmarcRecord.alignment.spf === 'strict' 
-                            ? 'bg-green-100 text-green-800' 
-                            : 'bg-yellow-100 text-yellow-800'
-                        }`}>
-                          {result.dmarcRecord.alignment.spf.toUpperCase()}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Reporting */}
-                  <div className="bg-white rounded-lg p-6 border border-gray-200">
-                    <h3 className="font-semibold text-gray-900 mb-4">Reporting Configuration</h3>
-                    <div className="space-y-3">
-                      <div>
-                        <p className="text-sm text-gray-600">Aggregate Reports</p>
-                        <p className="font-medium flex items-center gap-1">
-                          {result.dmarcRecord.aggregate_reports ? (
-                            <>
-                              <CheckCircle className="w-4 h-4 text-green-600" />
-                              {result.dmarcRecord.aggregate_reports}
-                            </>
-                          ) : (
-                            <>
-                              <XCircle className="w-4 h-4 text-red-600" />
-                              Not configured
-                            </>
-                          )}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-sm text-gray-600">Forensic Reports</p>
-                        <p className="font-medium flex items-center gap-1">
-                          {result.dmarcRecord.forensic_reports ? (
-                            <>
-                              <CheckCircle className="w-4 h-4 text-green-600" />
-                              {result.dmarcRecord.forensic_reports}
-                            </>
-                          ) : (
-                            <>
-                              <XCircle className="w-4 h-4 text-gray-400" />
-                              Not configured
-                            </>
-                          )}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Issues */}
-              {result.assessment.issues && result.assessment.issues.length > 0 && (
-                <div className="bg-red-50 rounded-lg p-6 border border-red-200">
-                  <h3 className="font-semibold text-red-900 mb-4 flex items-center gap-2">
-                    <AlertTriangle className="w-5 h-5" />
-                    Issues Detected ({result.assessment.issues.length})
-                  </h3>
-                  <div className="space-y-3">
-                    {result.assessment.issues.map((issue, index) => (
-                      <div key={index} className={`rounded-lg p-4 border ${getSeverityColor(issue.severity)}`}>
-                        <div className="space-y-2">
-                          <div className="flex items-start gap-3">
-                            <span className="text-xs font-semibold uppercase">
-                              {issue.severity}
-                            </span>
-                            <div className="flex-1">
-                              <p className="font-medium">{issue.message}</p>
-                              <p className="text-sm mt-1 opacity-75">{issue.impact}</p>
-                              <p className="text-sm mt-2 font-medium">Solution: {issue.solution}</p>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Recommendations */}
-              {result.assessment.recommendations && result.assessment.recommendations.length > 0 && (
-                <div className="bg-blue-50 rounded-lg p-6 border border-blue-200">
-                  <h3 className="font-semibold text-blue-900 mb-4 flex items-center gap-2">
-                    <Info className="w-5 h-5" />
-                    Recommendations
-                  </h3>
-                  <div className="space-y-3">
-                    {result.assessment.recommendations.map((rec, index) => (
-                      <div key={index} className="bg-white rounded-lg p-4 border border-blue-200">
-                        <div className="flex items-start gap-3">
-                          <span className={`text-xs font-semibold uppercase px-2 py-1 rounded ${
-                            rec.priority === 'critical' ? 'bg-red-100 text-red-700' :
-                            rec.priority === 'high' ? 'bg-orange-100 text-orange-700' :
-                            rec.priority === 'medium' ? 'bg-yellow-100 text-yellow-700' :
-                            rec.priority === 'low' ? 'bg-blue-100 text-blue-700' :
-                            'bg-gray-100 text-gray-700'
-                          }`}>
-                            {rec.priority}
-                          </span>
-                          <div className="flex-1">
-                            <p className="font-medium">{rec.action}</p>
-                            <p className="text-sm text-gray-600 mt-1">{rec.details}</p>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* DMARC Deployment Guide */}
-              <div className="bg-gray-50 rounded-lg p-6 border border-gray-200">
-                <h3 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
-                  <BarChart className="w-5 h-5 text-gray-600" />
-                  DMARC Deployment Stages
-                </h3>
-                <div className="space-y-3">
-                  <div className="flex items-center gap-3 p-3 bg-blue-50 rounded-lg">
-                    <span className="w-8 h-8 bg-blue-600 text-white rounded-full flex items-center justify-center text-sm font-bold">1</span>
-                    <div>
-                      <p className="font-medium">Monitor (p=none)</p>
-                      <p className="text-sm text-gray-600">Collect data and ensure legitimate emails pass</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-3 p-3 bg-yellow-50 rounded-lg">
-                    <span className="w-8 h-8 bg-yellow-600 text-white rounded-full flex items-center justify-center text-sm font-bold">2</span>
-                    <div>
-                      <p className="font-medium">Quarantine (p=quarantine)</p>
-                      <p className="text-sm text-gray-600">Suspicious emails moved to spam folder</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-3 p-3 bg-green-50 rounded-lg">
-                    <span className="w-8 h-8 bg-green-600 text-white rounded-full flex items-center justify-center text-sm font-bold">3</span>
-                    <div>
-                      <p className="font-medium">Reject (p=reject)</p>
-                      <p className="text-sm text-gray-600">Failing emails completely blocked</p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
+          <InfoNote title="How to fix">
+            Publish a TXT record at <code>_dmarc.{result.domain}</code>, starting
+            with monitoring mode, e.g.{' '}
+            <code>v=DMARC1; p=none; rua=mailto:dmarc@{result.domain}</code>, then
+            tighten to <code>p=quarantine</code> and finally <code>p=reject</code>{' '}
+            once reports look clean.
+          </InfoNote>
         </div>
-      </div>
-    </div>
+      )}
+
+      {result?.found && (
+        <div className="space-y-5">
+          <div className="grid grid-cols-3 gap-3">
+            <StatCard label="Grade" value={result.grade.grade} level={result.grade.level} />
+            <StatCard
+              label="Policy (p)"
+              value={result.parsed.policy || 'missing'}
+              level={policyBadgeLevel(result.parsed.policy)}
+            />
+            <StatCard
+              label="Coverage (pct)"
+              value={`${result.parsed.pct}%`}
+              level={result.parsed.pct < 100 ? 'medium' : 'low'}
+            />
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-sm font-semibold text-gray-900">
+                Raw record — _dmarc.{result.domain}
+              </h3>
+              <CopyButton text={result.parsed.raw} />
+            </div>
+            <Mono>{result.parsed.raw}</Mono>
+          </div>
+
+          <div>
+            <h3 className="text-sm font-semibold text-gray-900 mb-2">Parsed tags</h3>
+            <div className="border border-gray-200 rounded-lg px-4 py-1">
+              <TagRow label="Version (v)" value={result.parsed.version} />
+              <TagRow label="Policy (p)" value={result.parsed.policy} />
+              <TagRow
+                label="Subdomain policy (sp)"
+                value={result.parsed.subdomainPolicy || 'inherits p'}
+              />
+              <TagRow label="Percentage (pct)" value={`${result.parsed.pct}%`} />
+              <TagRow label="Aggregate reports (rua)" value={result.parsed.rua} />
+              <TagRow label="Forensic reports (ruf)" value={result.parsed.ruf} />
+              <TagRow label="DKIM alignment (adkim)" value={result.parsed.adkim} />
+              <TagRow label="SPF alignment (aspf)" value={result.parsed.aspf} />
+            </div>
+          </div>
+
+          <div>
+            <h3 className="text-sm font-semibold text-gray-900 mb-2">
+              Issues ({result.parsed.issues.length})
+            </h3>
+            {result.parsed.issues.length > 0 ? (
+              <IssueList issues={result.parsed.issues} />
+            ) : (
+              <p className="text-sm text-green-700 bg-green-50 border border-green-200 rounded-lg p-3">
+                No issues detected in this DMARC record.
+              </p>
+            )}
+          </div>
+
+          <InfoNote title="How the grade is computed">
+            Starts at 100, subtracts per issue (critical −40, high −25, medium −12,
+            low −4), then caps by policy strength: reject (no cap) &gt; quarantine
+            (max 89) &gt; none (max 74) &gt; missing (max 39). Score{' '}
+            {result.grade.score}/100 → grade {result.grade.grade}.
+          </InfoNote>
+        </div>
+      )}
+    </ToolShell>
   );
 }

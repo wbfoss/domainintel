@@ -1,486 +1,231 @@
 'use client';
 
-import { useState } from "react";
-import { X, Lock, AlertTriangle, CheckCircle, Shield, Globe, Clock, Search, Eye, Zap, Server, Signal, Target, Database } from "lucide-react";
+import { useState } from 'react';
+import { Lock } from 'lucide-react';
+import {
+  ToolShell,
+  QueryForm,
+  ErrorNote,
+  InfoNote,
+  Badge,
+  StatCard,
+} from './_shared';
+import { callTool, validateDomain } from '../../utils/security-tools';
+
+// Purely a display threshold on the real crt.sh count — not a verdict.
+const HIGH_RECENT_ISSUANCE = 10;
+
+function fmtDate(value) {
+  if (!value) return '—';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return String(value);
+  return d.toISOString().slice(0, 10);
+}
 
 export default function CertificateTransparencyMonitoring({ onClose }) {
-  const [domain, setDomain] = useState('');
+  const [target, setTarget] = useState('');
   const [loading, setLoading] = useState(false);
-  const [analysis, setAnalysis] = useState(null);
+  const [result, setResult] = useState(null);
   const [error, setError] = useState('');
 
-  const analyzeCertificateTransparency = async () => {
-    if (!domain.trim()) {
-      setError('Please enter a domain name');
-      return;
-    }
-
-    const cleanDomain = domain.trim().toLowerCase();
-
-    if (!/^[a-zA-Z0-9][a-zA-Z0-9.-]*[a-zA-Z0-9]\.[a-zA-Z]{2,}$/.test(cleanDomain)) {
-      setError('Please enter a valid domain name (e.g., example.com)');
-      return;
-    }
-
-    setLoading(true);
+  const analyze = async () => {
     setError('');
-
+    setResult(null);
+    let domain;
     try {
-      // Perform real certificate transparency analysis
-      const ctAnalysis = await performRealCTAnalysis(cleanDomain);
-      setAnalysis(ctAnalysis);
+      domain = validateDomain(target);
     } catch (err) {
-      setError(err.message || 'Failed to analyze certificate transparency');
+      setError(err.message);
+      return;
+    }
+    setLoading(true);
+    try {
+      const data = await callTool('ct', { target: domain });
+      setResult(data);
+    } catch (err) {
+      setError(err.message);
     } finally {
       setLoading(false);
     }
   };
 
-  const performRealCTAnalysis = async (domain) => {
-    // Validate domain format - allow anything.extension format
-    if (!/^[a-zA-Z0-9][a-zA-Z0-9.-]*[a-zA-Z0-9]\.[a-zA-Z]{2,}$/.test(domain)) {
-      throw new Error('Please enter a valid domain name (e.g., example.com)');
-    }
-
-    const analysis = {
-      domain,
-      timestamp: new Date().toISOString(),
-      ct_logs: [],
-      certificate_details: [],
-      anomaly_detection: {
-        suspicious_patterns: [],
-        risk_indicators: {
-          newly_observed_ca: false,
-          short_validity_period: false,
-          unusual_key_algorithm: false,
-          suspicious_extensions: false,
-          revocation_anomalies: false
-        }
-      },
-      security_insights: {
-        certificate_count_trend: {
-          last_30_days: 0,
-          last_90_days: 0,
-          last_year: 0,
-          trend: 'stable'
-        },
-        ca_distribution: [],
-        validation_types: {
-          domain_validated: 0,
-          organization_validated: 0,
-          extended_validation: 0
-        }
-      },
-      monitoring_recommendations: []
-    };
-
-    try {
-      // Simulate CT log analysis with realistic data
-      // In production, this would query actual CT logs like crt.sh, Google CT, etc.
-        // Simulate CT log data (in production, query actual CT logs)
-        analysis.ct_logs = [
-          {
-            name: 'Google Argon 2024',
-            url: 'ct.googleapis.com/logs/argon2024/',
-            operator: 'Google',
-            certificates_found: Math.floor(Math.random() * 5) + 1,
-            last_updated: new Date().toISOString().split('T')[0],
-            status: 'active'
-          },
-          {
-            name: 'Cloudflare Nimbus 2024',
-            url: 'ct.cloudflare.com/logs/nimbus2024/',
-            operator: 'Cloudflare',
-            certificates_found: Math.floor(Math.random() * 3) + 1,
-            last_updated: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-            status: 'active'
-          }
-        ];
-
-        // Simulate certificate details
-        analysis.certificate_details = [
-          {
-            serial_number: 'A' + Math.random().toString(16).substr(2, 23).toUpperCase(),
-            issuer: 'Let\'s Encrypt Authority X3',
-            subject: `CN=${domain}`,
-            san_domains: [domain, `www.${domain}`],
-            issued_date: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-            expiry_date: new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-            log_entry_index: Math.floor(Math.random() * 10000000),
-            ct_log: 'Google Argon 2024',
-            precertificate: false,
-            validation_type: 'DV'
-          }
-        ];
-
-        // Analyze for anomalies
-        const recentCerts = analysis.certificate_details.filter(cert => {
-          const issuedDate = new Date(cert.issued_date);
-          return (Date.now() - issuedDate.getTime()) < (24 * 60 * 60 * 1000); // Last 24 hours
-        });
-
-        if (recentCerts.length > 1) {
-          analysis.anomaly_detection.suspicious_patterns.push({
-            type: 'Rapid Certificate Issuance',
-            detected: true,
-            severity: 'medium',
-            description: `${recentCerts.length} certificates issued within 24 hours`,
-            count: recentCerts.length
-          });
-        }
-
-        // Security insights
-        analysis.security_insights.certificate_count_trend = {
-          last_30_days: Math.floor(Math.random() * 5) + 1,
-          last_90_days: Math.floor(Math.random() * 10) + 3,
-          last_year: Math.floor(Math.random() * 20) + 10,
-          trend: Math.random() > 0.5 ? 'stable' : 'increasing'
-        };
-
-        analysis.security_insights.ca_distribution = [
-          { ca: 'Let\'s Encrypt', percentage: 70 },
-          { ca: 'DigiCert', percentage: 20 },
-          { ca: 'Sectigo', percentage: 10 }
-        ];
-
-        // Monitoring recommendations
-        analysis.monitoring_recommendations = [
-          'Set up automated alerts for new certificate issuance',
-          'Monitor for certificates with suspicious Subject Alternative Names',
-          'Track certificate transparency logs for domain variations',
-          'Implement certificate pinning for critical applications',
-          'Monitor for short-lived certificate patterns',
-          'Check for certificate revocation list updates'
-        ];
-
-      return analysis;
-    } catch (error) {
-      throw new Error(`Certificate transparency analysis failed: ${error.message}`);
-    }
-  };
-
-  const getSeverityColor = (severity) => {
-    switch (severity) {
-      case 'high': return 'text-red-600 bg-red-50 border-red-200';
-      case 'medium': return 'text-yellow-600 bg-yellow-50 border-yellow-200';
-      case 'low': return 'text-green-600 bg-green-50 border-green-200';
-      default: return 'text-gray-600 bg-gray-50 border-gray-200';
-    }
-  };
-
-  const getTrendColor = (trend) => {
-    switch (trend) {
-      case 'increasing': return 'text-orange-600 bg-orange-50';
-      case 'decreasing': return 'text-green-600 bg-green-50';
-      case 'stable': return 'text-blue-600 bg-blue-50';
-      default: return 'text-gray-600 bg-gray-50';
-    }
-  };
-
-  const totalCertificates = analysis?.ct_logs.reduce((sum, log) => sum + log.certificates_found, 0) || 0;
-  const detectedAnomalies = analysis?.anomaly_detection.suspicious_patterns.filter(pattern => pattern.detected).length || 0;
+  const highRecent = result && result.last30Days > HIGH_RECENT_ISSUANCE;
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-      <div className="bg-white rounded-lg shadow-xl w-full max-w-5xl max-h-[90vh] overflow-hidden">
-        {/* Header */}
-        <div className="flex items-center justify-between p-6 border-b border-gray-200 bg-blue-50">
-          <div className="flex items-center gap-3">
-            <div className="bg-blue-100 p-2 rounded-lg">
-              <Lock className="w-6 h-6 text-blue-600" />
-            </div>
-            <div>
-              <h2 className="text-xl font-bold text-gray-900">Certificate Transparency Monitoring</h2>
-              <p className="text-sm text-gray-600">Track certificate issuance patterns and anomalies</p>
-            </div>
-          </div>
-          <button
-            onClick={onClose}
-            className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-          >
-            <X className="w-5 h-5 text-gray-500" />
-          </button>
-        </div>
+    <ToolShell
+      title="Certificate Transparency Monitoring"
+      subtitle="Certificates logged for a domain, sourced from crt.sh"
+      icon={Lock}
+      accent="blue"
+      onClose={onClose}
+      width="max-w-4xl"
+    >
+      <QueryForm
+        value={target}
+        onChange={setTarget}
+        onSubmit={analyze}
+        loading={loading}
+        placeholder="example.com"
+        accent="blue"
+        label="Search logs"
+      />
 
-        <div className="overflow-y-auto max-h-[calc(90vh-120px)]">
-          <div className="p-6">
-            {/* Input Form */}
-            <div className="mb-6">
-              <label htmlFor="domain" className="block text-sm font-medium text-gray-700 mb-2">
-                Domain to Monitor
-              </label>
-              <div className="flex gap-3">
-                <input
-                  type="text"
-                  id="domain"
-                  value={domain}
-                  onChange={(e) => setDomain(e.target.value)}
-                  placeholder="example.com"
-                  className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-                <button
-                  onClick={analyzeCertificateTransparency}
-                  disabled={loading}
-                  className="px-6 py-2 bg-blue-600 text-white font-medium rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                >
-                  {loading ? (
-                    <>
-                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                      Analyzing...
-                    </>
-                  ) : (
-                    <>
-                      <Search className="w-4 h-4" />
-                      Monitor
-                    </>
-                  )}
-                </button>
+      <ErrorNote>{error}</ErrorNote>
+
+      {!result && !error && (
+        <InfoNote title="What this checks">
+          Queries public Certificate Transparency logs (via crt.sh) for
+          certificates issued for this domain and its subdomains. CT logs reveal
+          every publicly issued certificate — useful for spotting unexpected
+          issuance and discovering subdomains.
+        </InfoNote>
+      )}
+
+      {result && (
+        <div className="space-y-5">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <StatCard label="Total certificates" value={result.total} level="info" />
+            <StatCard
+              label="Last 30 days"
+              value={result.last30Days}
+              level={highRecent ? 'medium' : 'low'}
+            />
+            <StatCard label="Last 90 days" value={result.last90Days} level="info" />
+            <StatCard
+              label="Unique subdomains"
+              value={result.uniqueSubdomains?.length || 0}
+              level="info"
+            />
+          </div>
+
+          {result.total === 0 && (
+            <div className="p-4 bg-gray-50 border border-gray-200 rounded-lg">
+              <div className="flex items-center gap-2 mb-2">
+                <Badge level="unknown">No certificates found</Badge>
+                <span className="text-sm font-semibold text-gray-800">{result.domain}</span>
               </div>
-              {error && (
-                <div className="mt-2 text-sm text-red-600 flex items-center gap-2">
-                  <AlertTriangle className="w-4 h-4" />
-                  {error}
+              <p className="text-sm text-gray-700">
+                crt.sh returned no logged certificates for this domain. Either no
+                publicly trusted certificate has ever been issued for it, or the
+                logs have not yet indexed one. Domains without HTTPS deployments
+                commonly show zero entries.
+              </p>
+            </div>
+          )}
+
+          {result.total > 0 && (
+            <>
+              {highRecent ? (
+                <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+                  <div className="flex items-center gap-2 mb-1">
+                    <Badge level="medium">Elevated recent issuance</Badge>
+                  </div>
+                  <p className="text-sm text-yellow-800">
+                    {result.last30Days} certificates were logged in the last 30
+                    days (threshold: {HIGH_RECENT_ISSUANCE}). This can be normal
+                    for large infrastructures or frequent short-lived renewals,
+                    but if you do not recognize the issuers or names below, verify
+                    that all issuance was authorized.
+                  </p>
+                </div>
+              ) : (
+                <p className="text-sm text-green-700 bg-green-50 border border-green-200 rounded-lg p-3">
+                  Recent issuance volume looks normal: {result.last30Days}{' '}
+                  certificate{result.last30Days === 1 ? '' : 's'} logged in the
+                  last 30 days.
+                </p>
+              )}
+
+              {result.issuerDistribution?.length > 0 && (
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-900 mb-2">
+                    Issuers ({result.issuerDistribution.length})
+                  </h3>
+                  <div className="border border-gray-200 rounded-lg divide-y divide-gray-100">
+                    {result.issuerDistribution.map((entry, i) => (
+                      <div
+                        key={i}
+                        className="flex items-center justify-between px-4 py-2 text-sm"
+                      >
+                        <span className="text-gray-900 break-all">{entry.issuer}</span>
+                        <span className="text-gray-600 shrink-0 ml-4">
+                          {entry.count} cert{entry.count === 1 ? '' : 's'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
-            </div>
 
-            {/* Analysis Results */}
-            {analysis && (
-              <div className="space-y-6">
-                {/* CT Overview */}
-                <div className="bg-gray-50 rounded-lg p-6">
-                  <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-                    <Database className="w-5 h-5" />
-                    Certificate Transparency Overview
+              {result.uniqueSubdomains?.length > 0 && (
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-900 mb-2">
+                    Subdomains seen in certificates ({result.uniqueSubdomains.length})
                   </h3>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div className="bg-white rounded-lg p-4 border">
-                      <div className="flex items-center gap-2 mb-2">
-                        <Lock className="w-4 h-4 text-blue-600" />
-                        <span className="text-sm font-medium text-gray-700">Total Certificates</span>
-                      </div>
-                      <div className="text-2xl font-bold text-gray-900">
-                        {totalCertificates}
-                      </div>
-                    </div>
-                    <div className="bg-white rounded-lg p-4 border">
-                      <div className="flex items-center gap-2 mb-2">
-                        <AlertTriangle className="w-4 h-4 text-orange-600" />
-                        <span className="text-sm font-medium text-gray-700">Anomalies</span>
-                      </div>
-                      <div className={`text-2xl font-bold px-2 py-1 rounded ${detectedAnomalies > 0 ? 'text-red-600 bg-red-50' : 'text-green-600 bg-green-50'}`}>
-                        {detectedAnomalies}
-                      </div>
-                    </div>
-                    <div className="bg-white rounded-lg p-4 border">
-                      <div className="flex items-center gap-2 mb-2">
-                        <Server className="w-4 h-4 text-blue-600" />
-                        <span className="text-sm font-medium text-gray-700">CT Logs</span>
-                      </div>
-                      <div className="text-2xl font-bold text-gray-900">
-                        {analysis.ct_logs.length}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* CT Logs Results */}
-                <div className="bg-white rounded-lg border p-6">
-                  <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-                    <Database className="w-5 h-5" />
-                    Certificate Transparency Logs
-                  </h3>
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                    {analysis.ct_logs.map((log, index) => (
-                      <div key={index} className="p-4 border rounded-lg bg-gray-50">
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="font-medium text-sm">{log.name}</span>
-                          <span className="text-xs px-2 py-1 bg-green-100 text-green-800 rounded">
-                            {log.status.toUpperCase()}
-                          </span>
-                        </div>
-                        <div className="text-xs text-gray-600 space-y-1">
-                          <div>Operator: {log.operator}</div>
-                          <div>Certificates: {log.certificates_found}</div>
-                          <div>Last Updated: {log.last_updated}</div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Certificate Details */}
-                <div className="bg-white rounded-lg border p-6">
-                  <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-                    <Lock className="w-5 h-5" />
-                    Certificate Details
-                  </h3>
-                  <div className="space-y-4">
-                    {analysis.certificate_details.map((cert, index) => (
-                      <div key={index} className="p-4 border rounded-lg">
-                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                          <div>
-                            <h4 className="font-medium text-gray-900 mb-2">{cert.subject}</h4>
-                            <div className="space-y-1 text-sm text-gray-600">
-                              <div>Issuer: {cert.issuer}</div>
-                              <div>Serial: {cert.serial_number}</div>
-                              <div>Validation: {cert.validation_type}</div>
-                              <div>CT Log: {cert.ct_log}</div>
-                            </div>
-                          </div>
-                          <div>
-                            <div className="space-y-2 text-sm">
-                              <div>
-                                <span className="text-gray-600">Issued:</span>
-                                <span className="ml-2 font-mono">{cert.issued_date}</span>
-                              </div>
-                              <div>
-                                <span className="text-gray-600">Expires:</span>
-                                <span className="ml-2 font-mono">{cert.expiry_date}</span>
-                              </div>
-                              <div>
-                                <span className="text-gray-600">SAN Domains:</span>
-                                <div className="mt-1 flex flex-wrap gap-1">
-                                  {cert.san_domains.map((san, sanIndex) => (
-                                    <span key={sanIndex} className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
-                                      {san}
-                                    </span>
-                                  ))}
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Anomaly Detection */}
-                <div className="bg-white rounded-lg border p-6">
-                  <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-                    <AlertTriangle className="w-5 h-5" />
-                    Anomaly Detection
-                  </h3>
-                  
-                  <div className="space-y-3 mb-6">
-                    <h4 className="font-medium text-gray-900">Suspicious Patterns</h4>
-                    {analysis.anomaly_detection.suspicious_patterns.map((pattern, index) => (
-                      <div key={index} className={`p-3 rounded-lg border ${getSeverityColor(pattern.severity)}`}>
-                        <div className="flex items-center justify-between mb-1">
-                          <span className="font-medium">{pattern.type}</span>
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs font-medium px-2 py-1 rounded bg-current bg-opacity-10">
-                              {pattern.severity.toUpperCase()}
-                            </span>
-                            {pattern.detected ? (
-                              <AlertTriangle className="w-4 h-4" />
-                            ) : (
-                              <CheckCircle className="w-4 h-4" />
-                            )}
-                          </div>
-                        </div>
-                        <p className="text-xs opacity-90">{pattern.description}</p>
-                        {pattern.count && (
-                          <p className="text-xs opacity-90 mt-1">Count: {pattern.count}</p>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-
-                  <div>
-                    <h4 className="font-medium text-gray-900 mb-3">Risk Indicators</h4>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      {Object.entries(analysis.anomaly_detection.risk_indicators).map(([key, value]) => (
-                        <div key={key} className="flex items-center justify-between p-2 bg-gray-50 rounded">
-                          <span className="text-sm text-gray-700 capitalize">
-                            {key.replace(/_/g, ' ')}
-                          </span>
-                          {value ? (
-                            <AlertTriangle className="w-4 h-4 text-red-600" />
-                          ) : (
-                            <CheckCircle className="w-4 h-4 text-green-600" />
-                          )}
-                        </div>
+                  <div className="border border-gray-200 rounded-lg p-3 max-h-48 overflow-y-auto">
+                    <div className="flex flex-wrap gap-2">
+                      {result.uniqueSubdomains.map((sub, i) => (
+                        <span
+                          key={i}
+                          className="px-2 py-1 bg-gray-100 border border-gray-200 rounded text-xs font-mono text-gray-800 break-all"
+                        >
+                          {sub}
+                        </span>
                       ))}
                     </div>
                   </div>
                 </div>
+              )}
 
-                {/* Security Insights */}
-                <div className="bg-white rounded-lg border p-6">
-                  <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-                    <Eye className="w-5 h-5" />
-                    Security Insights
+              {result.certificates?.length > 0 && (
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-900 mb-2">
+                    Recent certificates ({result.certificates.length} shown)
                   </h3>
-                  
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                    {/* Certificate Trends */}
-                    <div>
-                      <h4 className="font-medium text-gray-900 mb-3">Certificate Issuance Trends</h4>
-                      <div className="space-y-2">
-                        <div className="flex justify-between items-center p-2 bg-gray-50 rounded">
-                          <span className="text-sm text-gray-600">Last 30 days:</span>
-                          <span className="font-medium">{analysis.security_insights.certificate_count_trend.last_30_days}</span>
-                        </div>
-                        <div className="flex justify-between items-center p-2 bg-gray-50 rounded">
-                          <span className="text-sm text-gray-600">Last 90 days:</span>
-                          <span className="font-medium">{analysis.security_insights.certificate_count_trend.last_90_days}</span>
-                        </div>
-                        <div className="flex justify-between items-center p-2 bg-gray-50 rounded">
-                          <span className="text-sm text-gray-600">Last year:</span>
-                          <span className="font-medium">{analysis.security_insights.certificate_count_trend.last_year}</span>
-                        </div>
-                        <div className="flex justify-between items-center p-2 bg-gray-50 rounded">
-                          <span className="text-sm text-gray-600">Trend:</span>
-                          <span className={`text-sm font-medium px-2 py-1 rounded ${getTrendColor(analysis.security_insights.certificate_count_trend.trend)}`}>
-                            {analysis.security_insights.certificate_count_trend.trend.toUpperCase()}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* CA Distribution */}
-                    <div>
-                      <h4 className="font-medium text-gray-900 mb-3">Certificate Authority Distribution</h4>
-                      <div className="space-y-2">
-                        {analysis.security_insights.ca_distribution.map((ca, index) => (
-                          <div key={index} className="flex justify-between items-center p-2 bg-gray-50 rounded">
-                            <span className="text-sm text-gray-600">{ca.ca}:</span>
-                            <span className="font-medium">{ca.percentage}%</span>
-                          </div>
+                  <div className="overflow-x-auto border border-gray-200 rounded-lg max-h-80 overflow-y-auto">
+                    <table className="w-full text-sm">
+                      <thead className="bg-gray-50 text-left text-xs text-gray-600 sticky top-0">
+                        <tr>
+                          <th className="px-3 py-2 font-medium">Common name</th>
+                          <th className="px-3 py-2 font-medium">Issuer</th>
+                          <th className="px-3 py-2 font-medium">Not before</th>
+                          <th className="px-3 py-2 font-medium">Not after</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {result.certificates.map((cert, i) => (
+                          <tr key={i}>
+                            <td className="px-3 py-2 font-mono text-gray-900 break-all">
+                              {cert.commonName || '—'}
+                            </td>
+                            <td className="px-3 py-2 text-gray-700 break-all">
+                              {cert.issuer || '—'}
+                            </td>
+                            <td className="px-3 py-2 text-gray-700 whitespace-nowrap">
+                              {fmtDate(cert.notBefore)}
+                            </td>
+                            <td className="px-3 py-2 text-gray-700 whitespace-nowrap">
+                              {fmtDate(cert.notAfter)}
+                            </td>
+                          </tr>
                         ))}
-                      </div>
-                    </div>
+                      </tbody>
+                    </table>
                   </div>
                 </div>
+              )}
+            </>
+          )}
 
-                {/* Monitoring Recommendations */}
-                <div className="bg-blue-50 rounded-lg p-6 border border-blue-200">
-                  <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-                    <Zap className="w-5 h-5 text-blue-600" />
-                    Monitoring Recommendations
-                  </h3>
-                  <div className="space-y-2">
-                    {analysis.monitoring_recommendations.map((rec, index) => (
-                      <div key={index} className="flex items-start gap-3">
-                        <CheckCircle className="w-4 h-4 text-green-600 mt-0.5 flex-shrink-0" />
-                        <span className="text-sm text-gray-700">{rec}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Timestamp */}
-                <div className="text-center text-sm text-gray-500">
-                  <Clock className="w-4 h-4 inline mr-2" />
-                  Analysis completed at {new Date(analysis.timestamp).toLocaleString()}
-                </div>
-              </div>
-            )}
-          </div>
+          <InfoNote title="About this data">
+            All counts and entries above come directly from crt.sh, an index of
+            public Certificate Transparency logs. Logs are append-only but
+            indexing can lag by hours, and expired or revoked certificates remain
+            listed — presence in a log does not mean a certificate is currently
+            in use.
+          </InfoNote>
         </div>
-      </div>
-    </div>
+      )}
+    </ToolShell>
   );
 }
