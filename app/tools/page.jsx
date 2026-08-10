@@ -224,8 +224,8 @@ export default function ToolsPage() {
           <p className="text-gray-700 max-w-3xl">
             Comprehensive security and DNS analysis tools for domains, IPs, and network
             infrastructure. Every tool runs live against real data sources — RDAP, authoritative
-            DNS, live TLS handshakes, DNS blocklists, and Certificate Transparency logs — for
-            threat hunting, incident response, and email deliverability checks.
+            DNS, and live TLS handshakes — for threat hunting, incident response, and email
+            deliverability checks.
           </p>
         </div>
 
